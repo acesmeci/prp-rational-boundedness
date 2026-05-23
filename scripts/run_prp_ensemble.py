@@ -306,7 +306,7 @@ def parse_args():
 
     p.add_argument("--dt_lca", type=float, default=0.1)
     p.add_argument("--t0", type=float, default=0.15)
-    p.add_argument("--ITI", type=float, default=4.0)
+    p.add_argument("--ITI", type=float, default=0.5)
 
     p.add_argument("--optimize_onset", action="store_true")
     p.add_argument("--plot", action="store_true", help="Save PNG plot after running (same style as plot_prp_ensemble)")
