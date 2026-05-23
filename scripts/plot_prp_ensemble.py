@@ -149,7 +149,7 @@ def main():
     ap.add_argument("--z_task", type=str, default="A")
     ap.add_argument("--dt_lca", type=float, default=0.1)
     ap.add_argument("--t0", type=float, default=0.15)
-    ap.add_argument("--ITI", type=float, default=4.0)
+    ap.add_argument("--ITI", type=float, default=0.5)
     ap.add_argument("--persistence", type=float, default=0.90)
     ap.add_argument("--trials_per_soa", type=int, default=30)
     ap.add_argument("--soa_start", type=int, default=5)
