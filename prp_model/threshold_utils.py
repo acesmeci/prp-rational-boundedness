@@ -21,9 +21,9 @@ Conventions:
 
 import numpy as np
 import torch
-from prp.lca import run_lca_avg
-from prp.lca import run_lca_dist
-from prp.training_set import generate_training_set_matlab_style
+from prp_model.lca import run_lca_avg
+from prp_model.lca import run_lca_dist
+from prp_model.training_set import generate_training_set_matlab_style
 
 DEFAULT_N_REPEATS = 100  # Default number of repeats for LCA simulations. Use 100 if you have access to a GPU.
 

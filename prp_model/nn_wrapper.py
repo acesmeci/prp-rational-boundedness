@@ -19,7 +19,7 @@ for subsequent LCA readout and reward-rate analyses.
 
 import torch
 import torch.nn as nn
-from prp.task_network import TaskNetwork
+from prp_model.task_network import TaskNetwork
 
 
 class TaskNetworkWrapper:

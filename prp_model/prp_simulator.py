@@ -28,8 +28,8 @@ Typical usage:
 
 import numpy as np
 import torch
-from prp.lca import run_lca_avg
-from prp.threshold_utils import optimize_lca_threshold_dist, choose_onset_policy
+from prp_model.lca import run_lca_avg
+from prp_model.threshold_utils import optimize_lca_threshold_dist, choose_onset_policy
 
 # Number of stochastic LCA runs used when averaging within a trial
 DEFAULT_N_REPEATS = 100
