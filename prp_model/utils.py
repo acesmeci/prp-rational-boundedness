@@ -1,0 +1,228 @@
+"""
+Shared utilities for the PRP simulation pipeline.
+
+Consolidates functions that were previously duplicated across
+train_ensemble.py, run_prp_ensemble.py, and plot_prp_ensemble.py:
+
+- Trial generation (generate_trial_pair)
+- Network factory (make_wrapper)
+- Checkpoint I/O (save_state, load_state, save_threshold, load_threshold)
+- Aggregation helpers (nanmean, nanse, average_with_se)
+- Slope analysis (steepest_adjacent_slope)
+- Time-unit conversion constants
+"""
+
+import json
+from pathlib import Path
+from typing import Sequence
+
+import numpy as np
+import torch
+
+from prp_model.nn_wrapper import TaskNetworkWrapper
+from prp_model.lca import MS_PER_STEP, _DEFAULTS
+
+
+# ── Task definitions (paper, Fig. 13) ────────────────────────────────────────
+TASK_MAP = {
+    "A": (0, 0),
+    "B": (1, 1),
+    "C": (2, 2),
+    "D": (0, 1),
+    "E": (1, 0),
+}
+
+N_PATHWAYS = 3
+N_FEATURES = 3
+
+
+# ── Network factory ──────────────────────────────────────────────────────────
+
+def make_wrapper(device: str = "cpu") -> TaskNetworkWrapper:
+    """Create a TaskNetworkWrapper matching Musslick et al. (2023) Sim Study 3."""
+    return TaskNetworkWrapper(
+        stim_input_dim=N_PATHWAYS * N_FEATURES,
+        task_input_dim=N_PATHWAYS ** 2,
+        hidden_dim=100,
+        output_dim=N_PATHWAYS * N_FEATURES,
+        learning_rate=0.3,
+        init_scale=0.1,
+        init_task_scale=None,
+        bias_offset=-2.0,
+        default_weight_decay=0.0,
+        device=device,
+    )
+
+
+# ── Trial generation ─────────────────────────────────────────────────────────
+
+def generate_trial_pair(
+    prp_pair: tuple[str, str] = ("B", "A"),
+    seed: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Generate a single PRP trial: (stim1, stim2, cue1, cue2).
+
+    Both tasks receive the same stimulus features (shared across pathways),
+    matching the paper's PRP simulation protocol.
+
+    Parameters
+    ----------
+    prp_pair : (str, str)
+        (Task1_name, Task2_name), e.g. ("B", "A").
+    seed : int or None
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    stim1, stim2, cue1, cue2 : np.ndarray
+        One-hot stimulus and task-cue vectors.
+    """
+    rng = np.random.RandomState(seed)
+    feats = rng.randint(0, N_FEATURES, size=N_PATHWAYS)
+
+    def _make(task_name, features):
+        in_dim, out_dim = TASK_MAP[task_name]
+        stim = np.zeros(N_PATHWAYS * N_FEATURES, dtype=np.float32)
+        for i in range(N_PATHWAYS):
+            stim[i * N_FEATURES + features[i]] = 1
+        cue = np.zeros(N_PATHWAYS ** 2, dtype=np.float32)
+        cue[in_dim * N_PATHWAYS + out_dim] = 1
+        return stim, cue
+
+    stim1, cue1 = _make(prp_pair[0], feats)
+    stim2, cue2 = _make(prp_pair[1], feats)
+    return stim1, stim2, cue1, cue2
+
+
+# ── Checkpoint I/O ───────────────────────────────────────────────────────────
+
+def save_state(wrapper: TaskNetworkWrapper, path: str | Path) -> None:
+    """Save model weights to disk."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    torch.save(wrapper.model.state_dict(), path)
+
+
+def load_state(path: str | Path, device: str = "cpu") -> TaskNetworkWrapper:
+    """Load model weights from disk into a fresh wrapper."""
+    wrapper = make_wrapper(device=device)
+    wrapper.model.load_state_dict(torch.load(path, map_location=device))
+    wrapper.model.eval()
+    return wrapper
+
+
+def save_threshold(z: float, path: str | Path) -> None:
+    """Save a single LCA threshold value to JSON."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"z": float(z)}, f)
+
+
+def load_threshold(path: str | Path) -> float:
+    """Load a single LCA threshold value from JSON."""
+    with open(path, "r") as f:
+        return float(json.load(f)["z"])
+
+
+# ── Aggregation helpers ──────────────────────────────────────────────────────
+
+def nanmean(x) -> float:
+    """NaN-safe mean, returning float."""
+    return float(np.nanmean(np.asarray(x, float)))
+
+
+def nanse(x) -> float:
+    """NaN-safe standard error of the mean."""
+    arr = np.asarray(x, float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size <= 1:
+        return np.nan
+    return float(np.nanstd(arr, ddof=1) / np.sqrt(arr.size))
+
+
+def average_with_se(
+    results_list: list[dict],
+    keys: Sequence[str],
+) -> dict:
+    """
+    Average sweep results across networks, computing mean ± SE per SOA.
+
+    Assumes identical SOA grids across all entries in results_list.
+    """
+    soa = results_list[0]["soa"]
+    out = {"soa": soa}
+    for k in keys:
+        out[k] = []
+        out[k + "_se"] = []
+        for i in range(len(soa)):
+            vals = [r[k][i] for r in results_list]
+            out[k].append(nanmean(vals))
+            out[k + "_se"].append(nanse(vals))
+    return out
+
+
+# ── Slope analysis ───────────────────────────────────────────────────────────
+
+def steepest_adjacent_slope(
+    soa_steps: np.ndarray,
+    rt_values: np.ndarray,
+) -> dict:
+    """
+    Find the most-negative adjacent-pair slope in the RT vs. SOA curve.
+
+    Both inputs should be in raw simulation units (LCA steps / dt-seconds).
+    The returned slope is in units of seconds-per-second (Δ RT / Δ SOA),
+    which is directly comparable to the canonical −1 prediction.
+
+    Parameters
+    ----------
+    soa_steps : array-like
+        SOA values in LCA steps.
+    rt_values : array-like
+        Mean RT values (in dt-seconds, i.e. LCA steps × dt).
+
+    Returns
+    -------
+    dict with keys:
+        seg           : (soa_start, soa_end) of steepest segment
+        slope_s_per_s : slope in s/s (Δ RT_seconds / Δ SOA_seconds)
+    """
+    soa = np.asarray(soa_steps, float)
+    y = np.asarray(rt_values, float)
+
+    mask = np.isfinite(soa) & np.isfinite(y)
+    soa, y = soa[mask], y[mask]
+    order = np.argsort(soa)
+    soa, y = soa[order], y[order]
+
+    # RT is in dt-seconds (steps × dt + t0), SOA is in steps.
+    # Convert SOA to the same timescale as RT for a clean s/s slope:
+    dt = _DEFAULTS["dt"]
+    soa_sec = soa * dt               # steps → dt-seconds
+    dy = np.diff(y)                   # Δ RT in dt-seconds
+    dsoa = np.diff(soa_sec)           # Δ SOA in dt-seconds
+    slope_s_per_s = dy / dsoa         # dimensionless (s/s)
+
+    i = int(np.nanargmin(slope_s_per_s))
+    return {
+        "seg": (float(soa[i]), float(soa[i + 1])),
+        "slope_s_per_s": float(slope_s_per_s[i]),
+    }
+
+
+# ── Display-unit conversion ─────────────────────────────────────────────────
+
+def steps_to_ms(steps: np.ndarray) -> np.ndarray:
+    """Convert LCA steps to display milliseconds."""
+    return np.asarray(steps, float) * MS_PER_STEP
+
+
+def sim_seconds_to_ms(seconds: np.ndarray) -> np.ndarray:
+    """Convert simulation-seconds (steps × dt) to display milliseconds.
+
+    Since 1 step = dt sim-seconds = MS_PER_STEP real-ms:
+        ms = sim_seconds × (MS_PER_STEP / dt)
+    With defaults: ms = sim_seconds × 500.
+    """
+    return np.asarray(seconds, float) * (MS_PER_STEP / _DEFAULTS["dt"])
+
