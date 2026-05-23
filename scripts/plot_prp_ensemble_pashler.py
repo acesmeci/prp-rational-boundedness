@@ -7,8 +7,8 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-from prp.nn_wrapper import TaskNetworkWrapper
-from prp.prp_simulator import sweep_soa
+from prp_model.nn_wrapper import TaskNetworkWrapper
+from prp_model.prp_simulator import sweep_soa
 
 
 # ---------------------------

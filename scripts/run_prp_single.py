@@ -10,10 +10,10 @@ import matplotlib.pyplot as plt
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(REPO_ROOT))
 
-from prp.nn_wrapper import TaskNetworkWrapper
-from prp.prp_simulator import sweep_soa
-from prp.training_set import generate_training_set_matlab_style
-from prp.threshold_utils import optimize_lca_threshold_dist, compute_fixed_threshold_for_task_meanargmax
+from prp_model.nn_wrapper import TaskNetworkWrapper
+from prp_model.prp_simulator import sweep_soa
+from prp_model.training_set import generate_training_set_matlab_style
+from prp_model.threshold_utils import optimize_lca_threshold_dist, compute_fixed_threshold_for_task_meanargmax
 
 
 # ---------- Trial generator (same as notebook) ----------

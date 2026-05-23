@@ -13,10 +13,10 @@ import numpy as np
 import torch
 
 # ---- your project imports (adjust paths) ----
-from prp.nn_wrapper import TaskNetworkWrapper
-from prp.training_set import generate_training_set_matlab_style
-from prp.prp_simulator import sweep_soa
-from prp.threshold_utils import compute_fixed_threshold_for_task_meanargmax
+from prp_model.nn_wrapper import TaskNetworkWrapper
+from prp_model.training_set import generate_training_set_matlab_style
+from prp_model.prp_simulator import sweep_soa
+from prp_model.threshold_utils import compute_fixed_threshold_for_task_meanargmax
 
 # ---------------------------
 # Utilities: mean + SE

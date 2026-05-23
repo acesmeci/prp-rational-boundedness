@@ -3,8 +3,8 @@
 
 import os
 import torch
-from prp.task_generator import generate_fixed_task_set
-from prp.nn_wrapper import TaskNetworkWrapper
+from prp_model.task_generator import generate_fixed_task_set
+from prp_model.nn_wrapper import TaskNetworkWrapper
 
 def main():
     # 1) Hyper-parameters

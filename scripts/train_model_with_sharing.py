@@ -5,8 +5,8 @@ import os, math
 import numpy as np
 import torch
 from numpy.linalg import norm
-from prp.task_generator import generate_fixed_task_set
-from prp.nn_wrapper import TaskNetworkWrapper
+from prp_model.task_generator import generate_fixed_task_set
+from prp_model.nn_wrapper import TaskNetworkWrapper
 
 # ------------------------ utilities ------------------------
 
