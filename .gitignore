@@ -21,3 +21,10 @@ troubleshooting.md
 
 # Ensemble trained networks
 ensemble_ckpt_p09/
+
+# Ignore Jupyter notebooks
+notebooks/
+
+# Legacy modules
+prp_old/
+prp/sim-study-2/
