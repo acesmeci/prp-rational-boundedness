@@ -5,7 +5,7 @@ Run PRP ensemble sweep: train E networks (if missing), run PRP SOA sweeps, save 
 Usage examples:
     # Single run:
     python -m scripts.run_prp_sweep \
-        --store_dir ensemble_ckpt \
+        --store_dir ensemble_ckpt_p09 \
         --E 10 --persistence 0.80 \
         --trials_per_soa 30 \
         --soa_start 1 --soa_end 20 --soa_step 2 \
