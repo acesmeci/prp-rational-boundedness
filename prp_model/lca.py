@@ -27,14 +27,16 @@ Conventions
 
 Default parameters (paper, p. 45):
     λ = 0.4,  α = 0.2,  β = 0.2,  σ = 0.2,  t0 = 0.15,
-    dt = 0.1,  τ = 0.1,  ITI = 0.5
+    dt = 0.1,  τ = 1.0  (effective dt/τ = 0.1),  ITI = 0.5
 
 Note on dt/τ: The paper specifies both dt and τ as parameters of Eq. 4.
 With the defaults dt = τ = 0.1 we get dt/τ = 1.0, meaning each simulation
 step corresponds to one full time-constant. The MATLAB repository uses
-dt = 0.01, τ = 0.1 (dt/τ = 0.1), yielding slower per-step dynamics and
-requiring more steps.  Our implementation follows the paper's stated values
-and calibrates the output timescale via MS_PER_STEP for display purposes.
+dt = 0.01, τ = 0.1 (dt/τ = 0.1), yielding the same per-step advance
+but requiring more steps per trial.  Our implementation uses dt = 0.1,
+τ = 1.0 (dt/τ = 0.1) to match the MATLAB's effective accumulation rate
+while keeping the coarser step count, and calibrates the output timescale
+via MS_PER_STEP for display purposes.
 """
 
 import numpy as np
@@ -46,10 +48,12 @@ import numpy as np
 MS_PER_STEP = 50
 
 
-# ── Default LCA parameters (paper, p. 45) ───────────────────────────────────
+# ── Default LCA parameters ───────────────────────────────────────────────────
+# λ, α, β, σ from paper p. 45.  dt = 0.1, τ = 1.0 gives dt/τ = 0.1,
+# matching the MATLAB's effective accumulation rate (dt=0.01, τ=0.1).
 _DEFAULTS = dict(
     dt=0.1,
-    tau=0.1,
+    tau=1.0,
     lambda_=0.4,
     alpha=0.2,
     beta=0.2,
