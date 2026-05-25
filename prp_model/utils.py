@@ -63,8 +63,15 @@ def generate_trial_pair(
     """
     Generate a single PRP trial: (stim1, stim2, cue1, cue2).
 
-    Both tasks receive the same stimulus features (shared across pathways),
-    matching the paper's PRP simulation protocol.
+    Each stimulus vector contains only the task-relevant dimension active
+    (one feature unit set to 1), with all other dimensions at zero. This
+    follows Musslick et al. (2023, p. 68): "we first presented the network
+    with a feature from the stimulus dimension relevant to Task 1 [...] by
+    activating the corresponding unit in the stimulus input layer while
+    keeping all other stimulus input units inactivated."
+
+    At the SOA, stim2 is added to stim1, resulting in exactly two active
+    dimensions with activation values of 1.0 each.
 
     Parameters
     ----------
@@ -76,18 +83,21 @@ def generate_trial_pair(
     Returns
     -------
     stim1, stim2, cue1, cue2 : np.ndarray
-        One-hot stimulus and task-cue vectors.
+        Partial stimulus vectors and one-hot task cue vectors.
     """
     rng = np.random.RandomState(seed)
     feats = rng.randint(0, N_FEATURES, size=N_PATHWAYS)
 
     def _make(task_name, features):
         in_dim, out_dim = TASK_MAP[task_name]
+
+        # Stimulus: only the task-relevant dimension is active
         stim = np.zeros(N_PATHWAYS * N_FEATURES, dtype=np.float32)
-        for i in range(N_PATHWAYS):
-            stim[i * N_FEATURES + features[i]] = 1
+        stim[in_dim * N_FEATURES + features[in_dim]] = 1.0
+
+        # Task cue: row-major one-hot
         cue = np.zeros(N_PATHWAYS ** 2, dtype=np.float32)
-        cue[in_dim * N_PATHWAYS + out_dim] = 1
+        cue[in_dim * N_PATHWAYS + out_dim] = 1.0
         return stim, cue
 
     stim1, cue1 = _make(prp_pair[0], feats)
