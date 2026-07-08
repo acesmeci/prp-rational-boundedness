@@ -19,6 +19,14 @@ Conventions (matches paper/MATLAB):
   strategic delay (onset2 - soa) is instead counted in the stimulus-locked
   reaction time rt2_from_stim, which is the paper-faithful dependent measure.
 
+RT semantics:
+- Fields WITHOUT the _correct suffix are means over ALL decided LCA repeats
+  (errors included). The all-decided Task-1 RT also determines the cue-gating
+  time (the response occurs when it occurs, right or wrong).
+- Fields WITH the _correct suffix are means over CORRECT repeats only —
+  the empirical-convention dependent measure (PRP analyses report RTs on
+  correct trials). These are the values to report in results.
+
 Accuracy semantics:
 - acc_task1 / acc_task2 are graded P(correct): the fraction of stochastic LCA
   repeats (within the trial) on which the correct accumulator crossed first.
@@ -98,17 +106,20 @@ def run_prp_trial(
     Returns
     -------
     dict with keys:
-        rt1            : float | None   Task-1 RT (sim-seconds), mean over decided repeats
-        acc1           : float | None   Task-1 P(correct) over decided repeats
-        decided1       : float          fraction of repeats with a Task-1 decision
-        rt2_abs        : float | None   Task-2 RT from trial onset (sim-seconds)
-        rt2_from_stim  : float | None   Task-2 RT from S2 onset (paper-faithful)
-        rt2_tail       : float | None   Task-2 RT from cue-2 onset (LCA-internal)
-        acc2           : float | None   Task-2 P(correct) over decided repeats
-        decided2       : float          fraction of repeats with a Task-2 decision
-        onset2         : int            Task-2 cue onset actually used (steps)
-        z1, z2         : float          thresholds used for Task-1 / Task-2
-        outputs        : np.ndarray | None  pass-2 output series (if requested)
+        rt1              : float | None  Task-1 RT, all decided repeats (sim-s)
+        rt1_correct      : float | None  Task-1 RT, correct repeats only
+        acc1             : float | None  Task-1 P(correct) over decided repeats
+        decided1         : float         fraction of repeats with a T1 decision
+        rt2_abs          : float | None  Task-2 RT from trial onset (all decided)
+        rt2_from_stim    : float | None  Task-2 RT from S2 onset (all decided)
+        rt2_tail         : float | None  Task-2 RT from cue-2 onset (all decided)
+        rt2_from_stim_correct : float | None  Task-2 RT from S2 onset,
+                                              correct repeats only (REPORT THIS)
+        acc2             : float | None  Task-2 P(correct) over decided repeats
+        decided2         : float         fraction of repeats with a T2 decision
+        onset2           : int           Task-2 cue onset actually used (steps)
+        z1, z2           : float         thresholds used for Task-1 / Task-2
+        outputs          : np.ndarray | None  pass-2 output series (if requested)
     """
 
     def _integrate(input_series, task_series):
@@ -154,12 +165,14 @@ def run_prp_trial(
             thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
             dt=dt_lca, tau=tau,
         )
-    rt1, _, acc1, decided1 = run_lca_avg(
+    res1 = run_lca_avg(
         out1, idxs1, threshold=z1, n_repeats=n_repeats,
         dt=dt_lca, tau=tau, correct_response_idx=corr1,
     )
+    rt1 = res1["rt"]
 
-    # Convert Task-1 RT (sim-seconds) to the step index for gating the cue off
+    # Convert Task-1 RT (sim-seconds) to the step index for gating the cue off.
+    # Uses the all-decided mean: the response occurs when it occurs, right or wrong.
     t_off1 = int(np.ceil(max(0.0, (rt1 - t0) / dt_lca))) if rt1 is not None else max_timesteps
 
     # --- 2) Pass 2: turn OFF Task-1 after its decision -> evaluate Task-2 tail ---
@@ -177,8 +190,10 @@ def run_prp_trial(
     tail = out2[onset2:]                # readout starts at task engagement (see module docstring)
 
     result = {
-        "rt1": rt1, "acc1": acc1, "decided1": decided1,
+        "rt1": rt1, "rt1_correct": res1["rt_correct"],
+        "acc1": res1["p_correct"], "decided1": res1["frac_decided"],
         "rt2_abs": None, "rt2_from_stim": None, "rt2_tail": None,
+        "rt2_from_stim_correct": None,
         "acc2": None, "decided2": 0.0,
         "onset2": int(onset2),
         "z1": float(z1), "z2": np.nan,
@@ -198,17 +213,20 @@ def run_prp_trial(
         z2 = z_task2_fixed
     result["z2"] = float(z2)
 
-    rt2_tail, _, acc2, decided2 = run_lca_avg(
+    res2 = run_lca_avg(
         tail, idxs2, threshold=z2, n_repeats=n_repeats,
         dt=dt_lca, tau=tau, correct_response_idx=corr2,
     )
 
-    if rt2_tail is not None:
-        result["rt2_tail"] = rt2_tail
-        result["rt2_abs"] = rt2_tail + onset2 * dt_lca
-        result["rt2_from_stim"] = rt2_tail + (onset2 - soa) * dt_lca  # paper-faithful RT2
-    result["acc2"] = acc2
-    result["decided2"] = decided2
+    if res2["rt"] is not None:
+        result["rt2_tail"] = res2["rt"]
+        result["rt2_abs"] = res2["rt"] + onset2 * dt_lca
+        result["rt2_from_stim"] = res2["rt"] + (onset2 - soa) * dt_lca
+    if res2["rt_correct"] is not None:
+        # Paper-faithful, empirical-convention dependent measure.
+        result["rt2_from_stim_correct"] = res2["rt_correct"] + (onset2 - soa) * dt_lca
+    result["acc2"] = res2["p_correct"]
+    result["decided2"] = res2["frac_decided"]
 
     return result
 
@@ -238,25 +256,31 @@ def sweep_soa(
     -------
     dict
         Keys (each a per-SOA list of means across valid trials, NaN if none):
-          "soa", "rt_task1", "acc_task1", "decided_task1",
+          "soa",
+          "rt_task1", "rt_task1_correct", "acc_task1", "decided_task1",
           "rt_task2", "acc_task2", "decided_task2",
-          "onset2", "rt_task2_tail", "rt_task2_from_stim"
+          "onset2", "rt_task2_tail", "rt_task2_from_stim",
+          "rt_task2_from_stim_correct"
         RT/accuracy means include only trials where the corresponding task
         produced at least one decided LCA repeat; "decided_task*" reports the
         mean decided fraction over ALL trials, making exclusions visible.
+        rt_task2_from_stim_correct is the empirical-convention dependent
+        measure (correct trials only) and should be used for reported curves
+        and slope analyses.
     """
     keys = (
         "soa",
-        "rt_task1", "acc_task1", "decided_task1",
+        "rt_task1", "rt_task1_correct", "acc_task1", "decided_task1",
         "rt_task2", "acc_task2", "decided_task2",
         "onset2", "rt_task2_tail", "rt_task2_from_stim",
+        "rt_task2_from_stim_correct",
     )
     results = {k: [] for k in keys}
 
     for soa in soa_values:
-        r1, a1, d1 = [], [], []
+        r1, r1c, a1, d1 = [], [], [], []
         r2, a2, d2 = [], [], []
-        onsets, r2_tail, r2_from_stim = [], [], []
+        onsets, r2_tail, r2_from_stim, r2_from_stim_c = [], [], [], []
 
         for _ in range(n_trials_per_soa):
             s1, s2, c1, c2 = trial_generator()
@@ -274,15 +298,20 @@ def sweep_soa(
 
             if tr["rt1"] is not None:
                 r1.append(tr["rt1"]); a1.append(tr["acc1"])
+            if tr["rt1_correct"] is not None:
+                r1c.append(tr["rt1_correct"])
 
             if tr["rt2_tail"] is not None:
                 r2.append(tr["rt2_abs"]); a2.append(tr["acc2"])
                 r2_tail.append(tr["rt2_tail"])
                 r2_from_stim.append(tr["rt2_from_stim"])
                 onsets.append(tr["onset2"])
+            if tr["rt2_from_stim_correct"] is not None:
+                r2_from_stim_c.append(tr["rt2_from_stim_correct"])
 
         results["soa"].append(soa)
         results["rt_task1"].append(np.mean(r1) if r1 else np.nan)
+        results["rt_task1_correct"].append(np.mean(r1c) if r1c else np.nan)
         results["acc_task1"].append(np.mean(a1) if a1 else np.nan)
         results["decided_task1"].append(np.mean(d1) if d1 else np.nan)
         results["rt_task2"].append(np.mean(r2) if r2 else np.nan)
@@ -291,10 +320,13 @@ def sweep_soa(
         results["onset2"].append(np.mean(onsets) if onsets else np.nan)
         results["rt_task2_tail"].append(np.mean(r2_tail) if r2_tail else np.nan)
         results["rt_task2_from_stim"].append(np.mean(r2_from_stim) if r2_from_stim else np.nan)
+        results["rt_task2_from_stim_correct"].append(
+            np.mean(r2_from_stim_c) if r2_from_stim_c else np.nan
+        )
 
         if verbose:
             print(f"SOA={soa} | T1 RT={results['rt_task1'][-1]:.2f} "
-                  f"| T2 RT={results['rt_task2'][-1]:.2f} "
+                  f"| T2 RT(correct)={results['rt_task2_from_stim_correct'][-1]:.2f} "
                   f"| T2 acc={results['acc_task2'][-1]:.2f}")
 
     return results
