@@ -162,23 +162,20 @@ def run_lca_avg(
     correct_response_idx=None,
 ):
     """
-    Repeat ``run_lca`` and return mean RT, modal choice, graded accuracy,
-    and the fraction of repeats that reached a decision.
-
-    Only successful runs (threshold crossed) contribute to RT and accuracy.
+    Repeat ``run_lca`` over the same output series and aggregate.
 
     Returns
     -------
-    avg_rt : float or None
-        Mean RT across decided repeats, or None if none crossed.
-    most_common_choice : int or None
-        Mode of choices across decided repeats.
-    p_correct : float or None
-        Fraction of decided repeats on which the correct accumulator won
-        (requires ``correct_response_idx``; None if not provided or if no
-        repeat decided). This is the paper's P(correct) accuracy measure.
-    frac_decided : float
-        Fraction of repeats on which any accumulator crossed threshold.
+    dict with keys:
+        rt           : float | None  mean RT over ALL decided repeats
+                       (errors included; used for cue-gating timing)
+        rt_correct   : float | None  mean RT over CORRECT decided repeats only
+                       (the empirical-convention dependent measure; None if
+                       correct_response_idx not given or no correct repeat)
+        choice       : int | None    modal choice across decided repeats
+        p_correct    : float | None  fraction of decided repeats won by the
+                       correct accumulator (needs correct_response_idx)
+        frac_decided : float         fraction of repeats with any crossing
     """
     rts, choices = [], []
 
@@ -194,17 +191,24 @@ def run_lca_avg(
             rts.append(rt)
             choices.append(choice)
 
-    frac_decided = len(rts) / float(n_repeats)
+    out = {"rt": None, "rt_correct": None, "choice": None,
+           "p_correct": None, "frac_decided": len(rts) / float(n_repeats)}
     if not rts:
-        return None, None, None, 0.0
+        return out
 
-    avg_rt = float(np.mean(rts))
-    most_common_choice = int(max(set(choices), key=choices.count))
-    p_correct = None
+    rts = np.asarray(rts, float)
+    choices_arr = np.asarray(choices, int)
+
+    out["rt"] = float(np.mean(rts))
+    out["choice"] = int(max(set(choices), key=choices.count))
+
     if correct_response_idx is not None:
-        p_correct = float(np.mean([c == correct_response_idx for c in choices]))
-    return avg_rt, most_common_choice, p_correct, frac_decided
+        correct_mask = choices_arr == int(correct_response_idx)
+        out["p_correct"] = float(np.mean(correct_mask))
+        if correct_mask.any():
+            out["rt_correct"] = float(np.mean(rts[correct_mask]))
 
+    return out
 
 # ── Threshold sweep (for reward-rate optimization) ──────────────────────────
 
