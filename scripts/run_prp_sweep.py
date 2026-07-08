@@ -84,7 +84,7 @@ def per_network_job(
     train_if_missing, train_epochs, stop_loss,
     z_task, z_K, z_repeats, thresholds, ITI,
     prp_persistence, prp_trials_per_soa, prp_soa,
-    dt_lca, t0, optimize_onset,
+    dt_lca, t0, optimize_onset, fix_z_task1,
 ):
     t_start = time.time()
     model_path = os.path.join(store_dir, f"net_{net_idx:02d}.pt")
@@ -123,6 +123,7 @@ def per_network_job(
         persistence=prp_persistence,
         dt_lca=dt_lca, t0=t0, ITI=ITI,
         z_task2_fixed=z_A, optimize_onset=optimize_onset,
+        z_task1_fixed=(z_A if fix_z_task1 else None),
     )
     ind = sweep_soa(
         wrapper, gen_ind, prp_soa,
@@ -130,6 +131,7 @@ def per_network_job(
         persistence=prp_persistence,
         dt_lca=dt_lca, t0=t0, ITI=ITI,
         z_task2_fixed=z_A, optimize_onset=optimize_onset,
+        z_task1_fixed=(z_A if fix_z_task1 else None),
     )
 
     elapsed = time.time() - t_start
@@ -177,6 +179,7 @@ def run_ensemble(args):
         np.arange(*args.thresholds), args.ITI,
         args.persistence, args.trials_per_soa, soa_list,
         args.dt_lca, args.t0, args.optimize_onset,
+        args.fix_z_task1,
     )
 
     if args.workers > 0:
@@ -281,6 +284,10 @@ def parse_args():
     p.add_argument("--z_K", type=int, default=27)
     p.add_argument("--z_repeats", type=int, default=100)
     p.add_argument("--thresholds", type=float, nargs=3, default=[0.1, 1.5, 0.1])
+    p.add_argument("--fix_z_task1", action="store_true",
+                   help="Use precomputed z_A as Task-1's fixed threshold "
+                        "(A/B/C are symmetric diagonal tasks) instead of "
+                        "per-trial reward-rate fitting.")
 
     # PRP sweep
     p.add_argument("--persistence", type=float, default=0.80)
