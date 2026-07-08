@@ -130,6 +130,42 @@ def plot_rt2(data, out_path, add_pashler=True):
     plt.close(fig)
     print(f"  RT2 plot: {out_path}")
 
+# ===================================================================
+# RT1 vs SOA plot
+# ===================================================================
+def plot_rt1(data, out_path):
+    """Plot Task-1 RT vs SOA for both conditions (flat RT1 check)."""
+    params = data["params"]
+    persistence = params["persistence"]
+    soa_ms = steps_to_ms(np.array(data["soa"], float))
+
+    rt_key = ("rt_task1_correct"
+              if "rt_task1_correct" in data["avg"]["dep"] else "rt_task1")
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for cond_key, cond_label, color in [
+        ("dep", "B→A", "#1f77b4"),
+        ("ind", "C→A", "#2ca02c"),
+    ]:
+        mean_ms = sim_seconds_to_ms(data["avg"][cond_key][rt_key])
+        se_ms = sim_seconds_to_ms(
+            data["avg"][cond_key].get(rt_key + "_se", [0] * len(soa_ms))
+        )
+        ax.plot(soa_ms, mean_ms, "x--", color=color,
+                label=f"Task 1 RT (correct) | {cond_label}")
+        ax.fill_between(soa_ms, mean_ms - se_ms, mean_ms + se_ms,
+                        color=color, alpha=0.15)
+
+    ax.set_xlabel("SOA (milliseconds)")
+    ax.set_ylabel("RT1 (milliseconds)")
+    ax.set_title(f"Task 1 RT | Persistence p={persistence:.2f}")
+    ax.legend(fontsize=9)
+    ax.grid(True, linestyle=":", alpha=0.5)
+    fig.tight_layout()
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=300)
+    plt.close(fig)
+    print(f"  RT1 plot: {out_path}")
 
 # ===================================================================
 # Error rate plot
@@ -202,7 +238,9 @@ def main():
     )
     ap.add_argument("--no_pashler", action="store_true",
                     help="Omit Pashler (1994) reference curve")
-    ap.add_argument("--rt2_dir", type=str, default="output/plots/ensemble",
+    ap.add_argument("--rt1_dir", type=str, default="output/plots/ensemble/RT1",
+                    help="Output directory for RT1 plots")
+    ap.add_argument("--rt2_dir", type=str, default="output/plots/ensemble/RT2",
                     help="Output directory for RT2 plots")
     ap.add_argument("--er_dir", type=str, default="output/plots/ensemble/ER",
                     help="Output directory for error rate plots")
@@ -223,6 +261,7 @@ def main():
 
         plot_rt2(data, os.path.join(args.rt2_dir, f"{tag}.png"),
                  add_pashler=not args.no_pashler)
+        plot_rt1(data, os.path.join(args.rt2_dir, "RT1", f"{tag}.png"))
         plot_error_rates(data, os.path.join(args.er_dir, f"{tag}.png"))
 
 
