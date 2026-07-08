@@ -136,6 +136,7 @@ def compute_fixed_threshold_for_task_meanargmax(
     N_features=3,
     dt=_DEFAULTS["dt"],
     tau=_DEFAULTS["tau"],
+    n_timesteps: int = 100,
 ):
     """
     Select a fixed LCA threshold z for one task by argmax of MEAN reward-rate
@@ -168,11 +169,17 @@ def compute_fixed_threshold_for_task_meanargmax(
 
     rr_curves = []
     for k in pick:
-        x = torch.from_numpy(X[k][None, :]).float()
-        t = torch.from_numpy(T[k][None, :]).float()
+        # Sustained single-task trial: constant stimulus + cue for n_timesteps
+        # steps (matches PRP trial presentation; a 1-step series cannot support
+        # accumulation under dt/tau = 0.1 and degenerates z-selection).
+        x = torch.from_numpy(
+            np.tile(X[k][None, :], (n_timesteps, 1)).astype(np.float32)
+        )
+        t = torch.from_numpy(
+            np.tile(T[k][None, :], (n_timesteps, 1)).astype(np.float32)
+        )
         out_th = wrapper.integrate(x, t, persistence=persistence)
         out_np = np.stack([o.numpy() for o in out_th], axis=0)
-
         rel_idxs, correct_idx = _decode_task(
             T[k], X[k], N_pathways=N_pathways, N_features=N_features
         )
