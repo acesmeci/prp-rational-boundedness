@@ -32,3 +32,6 @@ prp_model/sim-study-2/
 # Documentation files
 instructions.md
 prp_literature_tracker.md
+
+# legacy threshold z jsons
+legacy/
