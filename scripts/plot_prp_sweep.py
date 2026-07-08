@@ -68,16 +68,20 @@ def plot_rt2(data, out_path, add_pashler=True):
 
     soa_ms = steps_to_ms(soa_steps)
 
+    rt_key = ("rt_task2_from_stim_correct"
+              if "rt_task2_from_stim_correct" in data["avg"]["dep"]
+              else "rt_task2_from_stim")
+
     # B→A (dependent)
-    dep_mean_ms = sim_seconds_to_ms(data["avg"]["dep"]["rt_task2_from_stim"])
+    dep_mean_ms = sim_seconds_to_ms(data["avg"]["dep"][rt_key])
     dep_se_ms = sim_seconds_to_ms(
-        data["avg"]["dep"].get("rt_task2_from_stim_se", [0] * len(soa_ms))
+        data["avg"]["dep"].get(rt_key + "_se", [0] * len(soa_ms))
     )
 
     # C→A (independent)
-    ind_mean_ms = sim_seconds_to_ms(data["avg"]["ind"]["rt_task2_from_stim"])
+    ind_mean_ms = sim_seconds_to_ms(data["avg"]["ind"][rt_key])
     ind_se_ms = sim_seconds_to_ms(
-        data["avg"]["ind"].get("rt_task2_from_stim_se", [0] * len(soa_ms))
+        data["avg"]["ind"].get(rt_key + "_se", [0] * len(soa_ms))
     )
 
     dep_slope = steepest_slope_ms(soa_ms, dep_mean_ms)

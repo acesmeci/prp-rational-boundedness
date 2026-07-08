@@ -195,9 +195,9 @@ def run_ensemble(args):
 
     # Compute averages and SE
     keys_to_avg = [
-        "rt_task1", "acc_task1", "decided_task1",
-        "rt_task2", "rt_task2_from_stim", "rt_task2_tail",
-        "acc_task2", "decided_task2", "onset2",
+        "rt_task1", "rt_task1_correct", "acc_task1", "decided_task1",
+        "rt_task2", "rt_task2_from_stim", "rt_task2_from_stim_correct",
+        "rt_task2_tail", "acc_task2", "decided_task2", "onset2",
     ]
     dep_avg = average_with_se([d["dep"] for d in per_net], keys_to_avg)
     ind_avg = average_with_se([d["ind"] for d in per_net], keys_to_avg)
@@ -250,7 +250,7 @@ def run_ensemble(args):
     # Print slope summary
     dep_slope = steepest_adjacent_slope(
         np.array(soa_list, float),
-        np.array(dep_avg["rt_task2_from_stim"], float),
+        np.array(dep_avg["rt_task2_from_stim_correct"], float),
     )
     print(
         f"Steepest B→A slope: {dep_slope['slope_s_per_s']:.2f} "
