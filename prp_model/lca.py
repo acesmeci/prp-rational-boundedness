@@ -159,26 +159,26 @@ def run_lca_avg(
     beta=_DEFAULTS["beta"],
     noise_std=_DEFAULTS["noise_std"],
     t0=_DEFAULTS["t0"],
+    correct_response_idx=None,
 ):
     """
-    Repeat ``run_lca`` and return mean RT and most-common choice.
+    Repeat ``run_lca`` and return mean RT, modal choice, graded accuracy,
+    and the fraction of repeats that reached a decision.
 
-    Only successful runs (threshold crossed) contribute.
-
-    Parameters
-    ----------
-    input_series, relevant_output_indices, threshold, dt, tau,
-    max_timesteps, lambda_, alpha, beta, noise_std, t0 :
-        See ``run_lca``.
-    n_repeats : int
-        Number of independent stochastic runs.
+    Only successful runs (threshold crossed) contribute to RT and accuracy.
 
     Returns
     -------
     avg_rt : float or None
-        Mean RT across successful runs, or None if none crossed.
+        Mean RT across decided repeats, or None if none crossed.
     most_common_choice : int or None
-        Mode of choices across successful runs.
+        Mode of choices across decided repeats.
+    p_correct : float or None
+        Fraction of decided repeats on which the correct accumulator won
+        (requires ``correct_response_idx``; None if not provided or if no
+        repeat decided). This is the paper's P(correct) accuracy measure.
+    frac_decided : float
+        Fraction of repeats on which any accumulator crossed threshold.
     """
     rts, choices = [], []
 
@@ -194,12 +194,16 @@ def run_lca_avg(
             rts.append(rt)
             choices.append(choice)
 
+    frac_decided = len(rts) / float(n_repeats)
     if not rts:
-        return None, None
+        return None, None, None, 0.0
 
     avg_rt = float(np.mean(rts))
     most_common_choice = int(max(set(choices), key=choices.count))
-    return avg_rt, most_common_choice
+    p_correct = None
+    if correct_response_idx is not None:
+        p_correct = float(np.mean([c == correct_response_idx for c in choices]))
+    return avg_rt, most_common_choice, p_correct, frac_decided
 
 
 # ── Threshold sweep (for reward-rate optimization) ──────────────────────────
