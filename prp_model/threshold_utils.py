@@ -1,35 +1,25 @@
 """
 Threshold utilities for the LCA readout layer.
 
-This module provides:
-- A reward-rate threshold optimizer that wraps `run_lca_dist` and forwards
-  all LCA parameters (`optimize_lca_threshold_dist`).
-- A per-task fixed-threshold precomputation over single-task stimuli with
-  ACCURACY-CONSTRAINED reward-rate selection
-  (`compute_fixed_threshold_for_task_meanargmax`).
-- A PRP onset policy helper (`choose_onset_policy`).
+Provides:
+- optimize_lca_threshold_dist: RR threshold sweep on a given output series.
+- compute_fixed_threshold_for_task_meanargmax: per-task fixed z from
+  SINGLE-TASK performance (accuracy-constrained RR argmax).
+- compute_condition_thresholds: per-condition fixed (z1, z2) from DUAL-TASK
+  context (accuracy-constrained RR argmax) — models block-level criterion
+  adaptation: participants raise response caution in dual-task blocks.
+- choose_onset_policy: Task-2 onset policy (paper Eq. 7 style).
 
 Threshold selection rule (08 Jul 2026):
-    Among thresholds whose mean single-task accuracy across stimuli is
+    Among thresholds whose mean accuracy across sampled stimuli is
     >= acc_floor (default 0.99), select the one maximizing mean reward rate.
-    Rationale: standard PRP instructions require responding as fast as
-    possible WHILE MAINTAINING ACCURACY — accuracy is an instructed
-    constraint that participants satisfice near ceiling, not a quantity
-    traded linearly against speed. Unconstrained RR = acc/(ITI+RT) is flat
-    across a wide z range (single-task accuracy saturates early), so its
-    argmax resolves sampling noise rather than a real optimum and can land
-    on hair-trigger thresholds that behave pathologically under dual-task
-    interference.
+    Rationale: PRP instructions make accuracy an instructed constraint that
+    participants satisfice near ceiling; unconstrained RR argmax resolves
+    sampling noise on a flat plateau and can select hair-trigger thresholds.
 
 Conventions:
-- Task cues are **row-major** one-hots (index = in_dim * N_pathways + out_dim).
-- Reward-rate = accuracy / (ITI + RT). In `run_lca_dist`, trials with no
-  decision yield RT=NaN and are treated as RR=0 so extreme thresholds
-  cannot win spuriously.
-- ALL LCA parameter defaults are sourced from `prp_model.lca._DEFAULTS`
-  (single source of truth). Never re-declare dt/tau literals here (a stale
-  local default previously ran threshold selection under collapsed
-  dt/tau=1.0 dynamics; fixed 08 Jul 2026).
+- Task cues are row-major one-hots (index = in_dim * N_pathways + out_dim).
+- ALL LCA parameter defaults sourced from prp_model.lca._DEFAULTS.
 """
 
 import numpy as np
@@ -62,22 +52,9 @@ def optimize_lca_threshold_dist(
     verbose=False,
 ):
     """
-    Sweep thresholds with full LCA dynamics and choose the z with max reward-rate.
-
-    Returns
-    -------
-    (best_threshold, results) : (float, dict)
-        `results` is the dictionary returned by `run_lca_dist` and includes:
-        thresholds, reward_rates, accuracies, rts, all_rts, all_accs.
-
-    Notes
-    -----
-    - Unconstrained argmax; used for per-trial fits. The fixed per-task
-      precompute applies the accuracy-constrained rule instead (see
-      compute_fixed_threshold_for_task_meanargmax).
-    - `run_lca_dist` treats "no decision" trials as RR=0.
-    - Tiebreaks: if several units cross z in the same discretized step,
-      `run_lca_dist` picks uniformly among them.
+    Sweep thresholds with full LCA dynamics; return (best z by plain RR
+    argmax, full results dict incl. per-threshold accuracies/RTs/RRs).
+    Constrained selection is applied by the callers that need it.
     """
     results = run_lca_dist(
         input_series=input_series,
@@ -102,8 +79,30 @@ def optimize_lca_threshold_dist(
     return best_threshold, results
 
 
+def _constrained_argmax(thresholds, acc_mean, rr_mean, acc_floor, label="",
+                        verbose=False):
+    """Accuracy-constrained RR argmax with most-accurate fallback."""
+    eligible = acc_mean >= acc_floor
+    if eligible.any():
+        idx = np.where(eligible)[0]
+        z_star = float(thresholds[idx[int(np.argmax(rr_mean[idx]))]])
+    else:
+        z_star = float(thresholds[int(np.argmax(acc_mean))])
+        print(f"[threshold:{label}] WARNING: no threshold met acc_floor="
+              f"{acc_floor}; falling back to most accurate z={z_star:.2f} "
+              f"(max mean acc={acc_mean.max():.3f})")
+    if verbose:
+        for i, z in enumerate(thresholds):
+            flag = "*" if eligible[i] else " "
+            print(f"{flag} z={z:.2f} | mean Acc={acc_mean[i]:.3f} "
+                  f"| mean RR={rr_mean[i]:.3f}")
+        print(f"Selected z_{label} (constrained argmax, "
+              f"acc_floor={acc_floor}): {z_star:.3f}")
+    return z_star
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Fixed per-task threshold from single-task performance
+# Fixed per-task threshold from SINGLE-TASK performance
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _decode_task(task_vec, input_vec, N_pathways=3, N_features=3):
@@ -129,31 +128,13 @@ def compute_fixed_threshold_for_task_meanargmax(
     N_features=3,
     dt=_DEFAULTS["dt"],
     tau=_DEFAULTS["tau"],
+    noise_std=_DEFAULTS["noise_std"],
     n_timesteps: int = 100,
     acc_floor: float = 0.99,
 ):
     """
-    Select a fixed LCA threshold z for one task by ACCURACY-CONSTRAINED
-    argmax of the mean reward-rate curve over K single-task stimuli.
-
-    Procedure:
-      1. Sample K single-task patterns for the chosen task.
-      2. Integrate each as a sustained trial (constant stimulus + cue for
-         n_timesteps steps; a 1-step series cannot support accumulation
-         under dt/tau = 0.1 and degenerates z-selection — fixed 08 Jul 2026).
-      3. Sweep thresholds per stimulus (run_lca_dist), stack per-stimulus
-         accuracy and RR curves, and average both across stimuli.
-      4. Among thresholds with mean accuracy >= acc_floor, return the one
-         with maximal mean reward rate. If no threshold satisfies the
-         constraint, fall back to the most accurate threshold (and warn).
-
-    (Note for methods text: this is a constrained argmax over the mean-RR
-    curve across stimuli, NOT a median of per-stimulus optima.)
-
-    Returns
-    -------
-    float
-        Selected threshold z_star.
+    Fixed z for one task: accuracy-constrained argmax of the mean RR curve
+    over K sustained single-task trials (see module docstring for the rule).
     """
     if thresholds is None:
         thresholds = np.arange(0.1, 1.5, 0.1)
@@ -164,57 +145,163 @@ def compute_fixed_threshold_for_task_meanargmax(
     X, T = X[mask], T[mask]
 
     rng = np.random.RandomState(seed)
-    n_avail = len(X)
-    pick = rng.choice(n_avail, size=min(K, n_avail), replace=False)
+    pick = rng.choice(len(X), size=min(K, len(X)), replace=False)
 
     rr_curves, acc_curves = [], []
     for k in pick:
-        # Sustained single-task trial (matches PRP trial presentation).
-        x = torch.from_numpy(
-            np.tile(X[k][None, :], (n_timesteps, 1)).astype(np.float32)
-        )
-        t = torch.from_numpy(
-            np.tile(T[k][None, :], (n_timesteps, 1)).astype(np.float32)
-        )
+        # Sustained single-task trial (matches PRP trial presentation; a
+        # 1-step series cannot support accumulation under dt/tau = 0.1).
+        x = torch.from_numpy(np.tile(X[k][None, :], (n_timesteps, 1)).astype(np.float32))
+        t = torch.from_numpy(np.tile(T[k][None, :], (n_timesteps, 1)).astype(np.float32))
         out_th = wrapper.integrate(x, t, persistence=persistence)
         out_np = np.stack([o.numpy() for o in out_th], axis=0)
 
-        rel_idxs, correct_idx = _decode_task(
-            T[k], X[k], N_pathways=N_pathways, N_features=N_features
-        )
-
+        rel_idxs, correct_idx = _decode_task(T[k], X[k],
+                                             N_pathways=N_pathways,
+                                             N_features=N_features)
         _, res = optimize_lca_threshold_dist(
-            out_np,
-            rel_idxs,
-            correct_response_idx=correct_idx,
-            thresholds=thresholds,
-            ITI=ITI,
-            n_repeats=n_repeats,
-            dt=dt, tau=tau,
+            out_np, rel_idxs, correct_response_idx=correct_idx,
+            thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
+            dt=dt, tau=tau, noise_std=noise_std,
         )
         rr_curves.append(res["reward_rates"])
         acc_curves.append(res["accuracies"])
 
     rr_mean = np.stack(rr_curves, axis=0).mean(axis=0)
     acc_mean = np.stack(acc_curves, axis=0).mean(axis=0)
+    return _constrained_argmax(thresholds, acc_mean, rr_mean, acc_floor,
+                               label=task_name, verbose=verbose)
 
-    eligible = acc_mean >= acc_floor
-    if eligible.any():
-        idx = np.where(eligible)[0]
-        z_star = float(thresholds[idx[int(np.argmax(rr_mean[idx]))]])
-    else:
-        z_star = float(thresholds[int(np.argmax(acc_mean))])
-        print(f"[compute_fixed_threshold] WARNING: no threshold met "
-              f"acc_floor={acc_floor} for task {task_name}; falling back to "
-              f"most accurate z={z_star:.2f} (max mean acc={acc_mean.max():.3f})")
 
-    if verbose:
-        for i, z in enumerate(thresholds):
-            flag = "*" if eligible[i] else " "
-            print(f"{flag} z={z:.2f} | mean Acc={acc_mean[i]:.3f} | mean RR={rr_mean[i]:.3f}")
-        print(f"Selected fixed z_{task_name} (constrained argmax, "
-              f"acc_floor={acc_floor}): {z_star:.3f}")
-    return z_star
+# ─────────────────────────────────────────────────────────────────────────────
+# Fixed per-condition thresholds from DUAL-TASK context
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_condition_thresholds(
+    wrapper,
+    task1_name: str,
+    task2_name: str,
+    soa_ref: int = 8,
+    n_stim: int = 20,
+    thresholds=None,
+    ITI=0.5,
+    n_repeats=DEFAULT_N_REPEATS,
+    persistence: float = 0.75,
+    seed: int = 42,
+    verbose=False,
+    dt=_DEFAULTS["dt"],
+    tau=_DEFAULTS["tau"],
+    noise_std=_DEFAULTS["noise_std"],
+    t0=_DEFAULTS["t0"],
+    max_timesteps: int = 100,
+    acc_floor: float = 0.99,
+):
+    """
+    Fixed (z1, z2) for one PRP condition, selected from DUAL-TASK context.
+
+    Models block-level criterion adaptation: decision criteria are set per
+    task per block from experienced (dual-task) context, fixed across trials
+    — no per-trial foresight ("oracle"), unlike per-trial fitting.
+
+    Procedure (mirrors run_prp_trial's two passes at a reference SOA):
+      1. For each of n_stim sampled trials: build the pass-1 series
+         (stim1 from t=0; stim2 and cue2 from soa_ref; cue1 throughout —
+         greedy onset, matching the policy-off regime). Sweep thresholds
+         for Task 1 on this series; average curves; constrained argmax -> z1.
+      2. Per trial: compute Task-1 RT under z1, gate cue1 off, build the
+         pass-2 series, sweep thresholds for Task 2 on the tail (from
+         soa_ref); average curves; constrained argmax -> z2.
+
+    Returns
+    -------
+    (z1, z2) : (float, float)
+    """
+    from prp_model.utils import generate_trial_pair  # local import (no cycle)
+
+    if thresholds is None:
+        thresholds = np.arange(0.1, 1.5, 0.1)
+    thresholds = np.asarray(thresholds)
+
+    def _integrate(inp_series, cue_series):
+        x = np.stack(inp_series, axis=0).astype(np.float32)
+        t = np.stack(cue_series, axis=0).astype(np.float32)
+        out_th = wrapper.integrate(torch.from_numpy(x), torch.from_numpy(t),
+                                   persistence=persistence)
+        return np.stack([o.numpy() for o in out_th], axis=0)
+
+    trials = []
+    rr1, acc1 = [], []
+
+    # ---- Pass 1 per stimulus: Task-1 threshold curves ----
+    for i in range(n_stim):
+        s1, s2, c1, c2 = generate_trial_pair((task1_name, task2_name),
+                                             seed=seed + i)
+        I, T = s1.shape[0], c1.shape[0]
+        inp_series, cue_series = [], []
+        for t in range(max_timesteps):
+            s = np.zeros(I, dtype=np.float32); s += s1
+            if t >= soa_ref: s += s2
+            c = np.zeros(T, dtype=np.float32); c += c1
+            if t >= soa_ref: c += c2          # greedy onset (policy off)
+            inp_series.append(s); cue_series.append(c)
+        out1 = _integrate(inp_series, cue_series)
+
+        idxs1, corr1 = _decode_task(c1, s1)
+        _, res = optimize_lca_threshold_dist(
+            out1, idxs1, correct_response_idx=corr1,
+            thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
+            dt=dt, tau=tau, noise_std=noise_std,
+        )
+        rr1.append(res["reward_rates"]); acc1.append(res["accuracies"])
+        trials.append((s1, s2, c1, c2, out1, idxs1, corr1))
+
+    z1 = _constrained_argmax(thresholds,
+                             np.stack(acc1).mean(axis=0),
+                             np.stack(rr1).mean(axis=0),
+                             acc_floor,
+                             label=f"{task1_name}|{task1_name}->{task2_name}",
+                             verbose=verbose)
+
+    # ---- Pass 2 per stimulus: Task-2 threshold curves under z1 gating ----
+    rr2, acc2 = [], []
+    for (s1, s2, c1, c2, out1, idxs1, corr1) in trials:
+        res1 = run_lca_avg(out1, idxs1, threshold=z1, n_repeats=n_repeats,
+                           dt=dt, tau=tau, noise_std=noise_std,
+                           correct_response_idx=corr1)
+        rt1 = res1["rt"]
+        t_off1 = (int(np.ceil(max(0.0, (rt1 - t0) / dt)))
+                  if rt1 is not None else max_timesteps)
+
+        I, T = s1.shape[0], c1.shape[0]
+        inp_series, cue_series = [], []
+        for t in range(max_timesteps):
+            s = np.zeros(I, dtype=np.float32); s += s1
+            if t >= soa_ref: s += s2
+            c = np.zeros(T, dtype=np.float32)
+            if t < t_off1: c += c1
+            if t >= soa_ref: c += c2
+            inp_series.append(s); cue_series.append(c)
+        out2 = _integrate(inp_series, cue_series)
+
+        tail = out2[soa_ref:]
+        if tail.shape[0] == 0:
+            continue
+        idxs2, corr2 = _decode_task(c2, s2)
+        _, res = optimize_lca_threshold_dist(
+            tail, idxs2, correct_response_idx=corr2,
+            thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
+            dt=dt, tau=tau, noise_std=noise_std,
+        )
+        rr2.append(res["reward_rates"]); acc2.append(res["accuracies"])
+
+    z2 = _constrained_argmax(thresholds,
+                             np.stack(acc2).mean(axis=0),
+                             np.stack(rr2).mean(axis=0),
+                             acc_floor,
+                             label=f"{task2_name}|{task1_name}->{task2_name}",
+                             verbose=verbose)
+
+    return z1, z2
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -226,37 +313,26 @@ def choose_onset_policy(
     input_a, input_b,
     task_a, task_b,
     soa: int = 0,
-    max_onset_delay: int = 5,      # small, fast search window
+    max_onset_delay: int = 5,
     max_timesteps: int = 100,
     persistence: float = 0.5,
     ITI: float = 0.5,
     dt_lca: float = _DEFAULTS["dt"],
     t0: float = _DEFAULTS["t0"],
     tau: float = _DEFAULTS["tau"],
-    # speedups for policy search:
+    noise_std: float = _DEFAULTS["noise_std"],
     z_a_fixed: float | None = None,
     z_b_fixed: float | None = None,
     policy_n_repeats: int = 30,
-    thresholds_policy: np.ndarray | None = None,  # coarse grid for policy search
+    thresholds_policy: np.ndarray | None = None,
 ):
     """
-    Reward-rate onset policy for Task-2.
-
-    Evaluates candidate onsets in [SOA, SOA + max_onset_delay] and returns the
-    one that maximizes:
-        RR = (P_corr_1 * P_corr_2) / (ITI + max(RT_1, RT_2_abs)).
-
-    Accuracies are graded P(correct) across LCA repeats (paper-faithful,
-    Eq. 7). RTs are means over all decided repeats (the policy models the
-    agent's expected trial duration, errors included).
-
-    Returns
-    -------
-    int
-        Best onset (in steps) according to the policy.
+    Reward-rate onset policy for Task-2 (see paper Eq. 7).
+    RR = (P_corr_1 * P_corr_2) / (ITI + max(RT_1, RT_2_abs)).
+    Emits a warning if the optimum sits at the search-window edge
+    (window too small — cf. MATLAB V2's adaptive window).
     """
     if thresholds_policy is None:
-        # Coarse grid is enough for relative comparisons (faster).
         thresholds_policy = np.linspace(0.1, 0.6, 6)
 
     def _decode(task_vec, input_vec, N_pathways=3, N_features=3):
@@ -286,7 +362,7 @@ def choose_onset_policy(
         out_th = task_net.integrate(torch.from_numpy(input_np),
                                     torch.from_numpy(task_np),
                                     persistence=persistence)
-        return np.stack([o.numpy() for o in out_th], axis=0)  # [T, D_out]
+        return np.stack([o.numpy() for o in out_th], axis=0)
 
     idxs_a, corr_a = _decode(task_a, input_a)
     idxs_b, corr_b = _decode(task_b, input_b)
@@ -296,30 +372,23 @@ def choose_onset_policy(
     onset_upper = min(int(soa) + int(max_onset_delay), max_timesteps - 1)
 
     for onset in range(int(soa), onset_upper + 1):
-        # ---- Pass 1: Task-1 timing ----
         out1 = _integrate_once(onset_b=onset, gate_after_a_steps=None)
         if z_a_fixed is None:
             z_a, _ = optimize_lca_threshold_dist(
-                out1, idxs_a,
-                correct_response_idx=corr_a,
-                thresholds=thresholds_policy,
-                ITI=ITI,
+                out1, idxs_a, correct_response_idx=corr_a,
+                thresholds=thresholds_policy, ITI=ITI,
                 n_repeats=policy_n_repeats,
-                dt=dt_lca, tau=tau,
+                dt=dt_lca, tau=tau, noise_std=noise_std,
             )
         else:
             z_a = z_a_fixed
-        res_a = run_lca_avg(
-            out1, idxs_a, threshold=z_a,
-            n_repeats=policy_n_repeats, dt=dt_lca, tau=tau,
-            correct_response_idx=corr_a,
-        )
+        res_a = run_lca_avg(out1, idxs_a, threshold=z_a,
+                            n_repeats=policy_n_repeats, dt=dt_lca, tau=tau,
+                            noise_std=noise_std, correct_response_idx=corr_a)
         if res_a["rt"] is None:
             continue
-        # Convert RT (sec) to step index for gating Task-1 off
         t_off_a = int(np.ceil(max(0.0, (res_a["rt"] - t0) / dt_lca)))
 
-        # ---- Pass 2: gate Task-1, then evaluate Task-2 ----
         out2 = _integrate_once(onset_b=onset, gate_after_a_steps=t_off_a)
         tail = out2[onset:]
         if tail.shape[0] == 0:
@@ -327,27 +396,28 @@ def choose_onset_policy(
 
         if z_b_fixed is None:
             z_b, _ = optimize_lca_threshold_dist(
-                tail, idxs_b,
-                correct_response_idx=corr_b,
-                thresholds=thresholds_policy,
-                ITI=ITI,
+                tail, idxs_b, correct_response_idx=corr_b,
+                thresholds=thresholds_policy, ITI=ITI,
                 n_repeats=policy_n_repeats,
-                dt=dt_lca, tau=tau,
+                dt=dt_lca, tau=tau, noise_std=noise_std,
             )
         else:
             z_b = z_b_fixed
-        res_b = run_lca_avg(
-            tail, idxs_b, threshold=z_b,
-            n_repeats=policy_n_repeats, dt=dt_lca, tau=tau,
-            correct_response_idx=corr_b,
-        )
+        res_b = run_lca_avg(tail, idxs_b, threshold=z_b,
+                            n_repeats=policy_n_repeats, dt=dt_lca, tau=tau,
+                            noise_std=noise_std, correct_response_idx=corr_b)
         if res_b["rt"] is None:
             continue
-        rt_b_abs = res_b["rt"] + onset * dt_lca  # convert to absolute time
+        rt_b_abs = res_b["rt"] + onset * dt_lca
 
         rr = (res_a["p_correct"] * res_b["p_correct"]) / (ITI + max(res_a["rt"], rt_b_abs))
         if rr > best_rr:
             best_rr = rr
             best_onset = onset
+
+    if best_onset == onset_upper:
+        print(f"[choose_onset_policy] WARNING: optimum at window edge "
+              f"(onset={best_onset}, soa={soa}, max_onset_delay={max_onset_delay}) "
+              f"— consider a larger window.")
 
     return int(best_onset)
