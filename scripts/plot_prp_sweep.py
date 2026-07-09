@@ -3,17 +3,18 @@
 Plot PRP sweep results from saved JSON (thesis-quality figures).
 
 Usage:
-    python -m scripts.plot_prp_sweep --json output/results/E20_*.json
+    python -m scripts.plot_prp_sweep --json output/results/E20_*.json \
+        [--context talk] [--rt2_ylim 440 700] [--rt1_ylim 240 340] [--pashler]
 
 Outputs per JSON (PNG + PDF):
-    main   -> output/plots/ensemble/<tag>_main.{png,pdf}   (RT2 + RT1 panels)
+    main   -> output/plots/ensemble/<tag>_main.{png,pdf}   (RT1 left, RT2 right)
     er     -> output/plots/ensemble/ER/<tag>_er.{png,pdf}
     onset  -> output/plots/ensemble/onset/<tag>_onset.{png,pdf}
 
 Slope reporting follows the thesis Ch.2 evaluation criteria:
-    SOA* = 0.80 x RT1 (RT1 = mean correct-trials Task-1 RT, flat across SOA)
-    head slope = OLS over SOA points <= SOA*; tail slope = OLS over points >= SOA*
-    two-shortest-SOA slope also reported (primary empirical criterion).
+    SOA* = SOA_STAR_FACTOR x RT1 (RT1 = mean correct-trials Task-1 RT).
+    Head slope (OLS over SOA <= SOA*) is annotated in the legend; tail and
+    two-shortest-SOA slopes are printed to console for reporting in text.
 """
 import os, json, argparse, glob
 from pathlib import Path
@@ -26,25 +27,43 @@ import matplotlib.pyplot as plt
 from prp_model.lca import MS_PER_STEP
 from prp_model.utils import steps_to_ms, sim_seconds_to_ms
 
-COLORS = {"dep": "#1f77b4", "ind": "#2ca02c"}
-LABELS = {"dep": "B\u2192A (shared)", "ind": "C\u2192A (separated)"}
+# SOA* boundary factor (decided with Sebastian, 09 Jul 2026; was 0.80).
+# NOTE: Ch.2 table/text were written under 0.80 — revision item.
+SOA_STAR_FACTOR = 0.60
 
-plt.rcParams.update({
-    "font.size": 11, "axes.labelsize": 12, "axes.titlesize": 12,
-    "legend.fontsize": 10, "xtick.labelsize": 10, "ytick.labelsize": 10,
-    "axes.spines.top": False, "axes.spines.right": False,
-})
+COLORS = {"dep": "#1f77b4", "ind": "#2ca02c"}
+LABELS = {"dep": "B\u2192A (dependent)", "ind": "C\u2192A (independent)"}
+
+CONTEXTS = {  # name -> (base font size, figure scale)
+    "paper": (11, 1.0),
+    "talk": (14, 1.15),
+    "poster": (18, 1.35),
+}
+
+
+def set_context(name):
+    base, scale = CONTEXTS[name]
+    plt.rcParams.update({
+        "font.size": base,
+        "axes.labelsize": base + 2,
+        "axes.titlesize": base + 2,
+        "legend.fontsize": base - 1,
+        "xtick.labelsize": base,
+        "ytick.labelsize": base,
+        "lines.linewidth": 1.6 * scale,
+        "lines.markersize": 6 * scale,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+    })
+    return scale
 
 
 # ===================================================================
 # Helpers
 # ===================================================================
 def _get(data, cond, key):
-    """Fetch avg series with correct-trials preference and old-JSON fallback."""
     avg = data["avg"][cond]
-    if key in avg:
-        return np.asarray(avg[key], float)
-    return None
+    return np.asarray(avg[key], float) if key in avg else None
 
 
 def _rt_key(data, base):
@@ -53,7 +72,6 @@ def _rt_key(data, base):
 
 
 def ols_slope(x, y):
-    """Dimensionless OLS slope over finite pairs; nan if <2 points."""
     x, y = np.asarray(x, float), np.asarray(y, float)
     m = np.isfinite(x) & np.isfinite(y)
     if m.sum() < 2:
@@ -70,12 +88,11 @@ def two_shortest_slope(soa_ms, rt_ms):
 
 
 def soa_star_ms(data, cond="dep"):
-    """SOA* = 0.80 x mean correct-trials RT1 (flat across SOA), in ms."""
-    key = _rt_key(data, "rt_task1")
-    rt1 = _get(data, cond, key)
+    """SOA* = SOA_STAR_FACTOR x mean correct-trials RT1, in ms."""
+    rt1 = _get(data, cond, _rt_key(data, "rt_task1"))
     if rt1 is None or not np.isfinite(rt1).any():
         return np.nan
-    return 0.80 * float(np.nanmean(sim_seconds_to_ms(rt1)))
+    return SOA_STAR_FACTOR * float(np.nanmean(sim_seconds_to_ms(rt1)))
 
 
 def head_tail_slopes(soa_ms, rt_ms, soa_star):
@@ -100,18 +117,41 @@ def _save(fig, out_base):
 
 
 # ===================================================================
-# F2: Main figure — RT2 (left) + RT1 (right)
+# F2: Main figure — RT1 (left) + RT2 (right)
 # ===================================================================
-def plot_main(data, out_base, add_pashler=False):
+def plot_main(data, out_base, scale=1.15, add_pashler=False,
+              rt1_ylim=None, rt2_ylim=None):
     p = data["params"]["persistence"]
     soa_ms = steps_to_ms(np.asarray(data["soa"], float))
     rt2_key = _rt_key(data, "rt_task2_from_stim")
     rt1_key = _rt_key(data, "rt_task1")
     star = soa_star_ms(data)
+    tag = data.get("tag", "")
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12 * scale, 4.8 * scale))
 
-    # --- RT2 panel ---
+    # --- RT1 panel (LEFT: Task 1 comes first) ---
+    for cond in ("dep", "ind"):
+        mean = sim_seconds_to_ms(_get(data, cond, rt1_key))
+        se = sim_seconds_to_ms(
+            data["avg"][cond].get(rt1_key + "_se", np.zeros(len(soa_ms))))
+        ax1.plot(soa_ms, mean, "o--", color=COLORS[cond], label=LABELS[cond])
+        ax1.fill_between(soa_ms, mean - se, mean + se,
+                         color=COLORS[cond], alpha=0.15)
+    ax1.set_xlabel("SOA (ms)")
+    ax1.set_ylabel("RT1 (ms)")
+    ax1.set_title(f"Task 1 RT  (p = {p:.2f})")
+    ax1.legend(loc="upper right", frameon=False)
+    ax1.grid(True, linestyle=":", alpha=0.4)
+    if rt1_ylim:
+        ax1.set_ylim(*rt1_ylim)
+    else:
+        lo, hi = ax1.get_ylim()
+        pad = max(40.0, 0.15 * (hi - lo))
+        ax1.set_ylim(lo - pad, hi + pad)
+
+    # --- RT2 panel (RIGHT) ---
+    console = [f"[{tag}] SOA* = {star:.0f} ms (factor {SOA_STAR_FACTOR})"]
     for cond in ("dep", "ind"):
         mean = sim_seconds_to_ms(_get(data, cond, rt2_key))
         se = sim_seconds_to_ms(
@@ -119,60 +159,43 @@ def plot_main(data, out_base, add_pashler=False):
         ts = two_shortest_slope(soa_ms, mean)
         head, tail = (head_tail_slopes(soa_ms, mean, star)
                       if np.isfinite(star) else (np.nan, np.nan))
-        ax1.plot(soa_ms, mean, "x--", color=COLORS[cond],
-                 label=(f"{LABELS[cond]}  "
-                        f"[{ts:.2f} | head {head:.2f} | tail {tail:.2f}]"))
-        ax1.fill_between(soa_ms, mean - se, mean + se,
+        ax2.plot(soa_ms, mean, "x--", color=COLORS[cond],
+                 label=f"{LABELS[cond]}, head slope {head:.2f}")
+        ax2.fill_between(soa_ms, mean - se, mean + se,
                          color=COLORS[cond], alpha=0.15)
+        console.append(f"  {cond}: 2-shortest {ts:.2f} | head {head:.2f} "
+                       f"| tail {tail:.2f}")
 
     if np.isfinite(star):
-        ax1.axvline(star, color="gray", linestyle=":", linewidth=1.2)
-        ax1.text(star, ax1.get_ylim()[1], "  SOA*", color="gray",
-                 va="top", ha="left", fontsize=10)
+        ax2.axvline(star, color="gray", linestyle=":", linewidth=1.2)
+        ax2.text(star, ax2.get_ylim()[0], " SOA*", color="gray",
+                 va="bottom", ha="left")
 
     if add_pashler:
         pa = get_pashler_curve()
-        ax1.plot(pa["soa_ms"], pa["rt2_ms"], "ko-", alpha=0.5,
+        ax2.plot(pa["soa_ms"], pa["rt2_ms"], "ko-", alpha=0.5,
                  label="Pashler (1994) Fig 1 (schematic)")
 
-    ax1.set_xlabel("SOA (ms)")
-    ax1.set_ylabel("RT2 (ms)")
-    ax1.set_title(f"Task 2 RT  (p = {p:.2f})")
-    ax1.legend(title="[2-shortest | head | tail slopes]",
-               title_fontsize=9, loc="upper right")
-    ax1.grid(True, linestyle=":", alpha=0.4)
-
-    # --- RT1 panel ---
-    for cond in ("dep", "ind"):
-        mean = sim_seconds_to_ms(_get(data, cond, rt1_key))
-        se = sim_seconds_to_ms(
-            data["avg"][cond].get(rt1_key + "_se", np.zeros(len(soa_ms))))
-        ax2.plot(soa_ms, mean, "o--", color=COLORS[cond],
-                 markersize=4, label=LABELS[cond])
-        ax2.fill_between(soa_ms, mean - se, mean + se,
-                         color=COLORS[cond], alpha=0.15)
-
     ax2.set_xlabel("SOA (ms)")
-    ax2.set_ylabel("RT1 (ms)")
-    ax2.set_title(f"Task 1 RT  (p = {p:.2f})")
-    ax2.legend(loc="upper right")
+    ax2.set_ylabel("RT2 (ms)")
+    ax2.set_title(f"Task 2 RT  (p = {p:.2f})")
+    ax2.legend(loc="upper right", frameon=False)
     ax2.grid(True, linestyle=":", alpha=0.4)
-    # y-range: pad around data so flatness is visible but honest
-    lo, hi = ax2.get_ylim()
-    pad = max(50.0, 0.15 * (hi - lo))
-    ax2.set_ylim(lo - pad, hi + pad)
+    if rt2_ylim:
+        ax2.set_ylim(*rt2_ylim)
 
+    print("\n".join(console))  # tail + 2-shortest slopes: report in text
     _save(fig, out_base)
 
 
 # ===================================================================
 # F3: Error rates
 # ===================================================================
-def plot_error_rates(data, out_base):
+def plot_error_rates(data, out_base, scale=1.15):
     p = data["params"]["persistence"]
     soa_ms = steps_to_ms(np.asarray(data["soa"], float))
 
-    fig, ax = plt.subplots(figsize=(7.5, 4.5))
+    fig, ax = plt.subplots(figsize=(8 * scale, 4.8 * scale))
     for cond in ("dep", "ind"):
         for task, marker, alpha in (("acc_task2", "x--", 1.0),
                                     ("acc_task1", "o-", 0.45)):
@@ -183,7 +206,7 @@ def plot_error_rates(data, out_base):
             err = 1.0 - acc
             tlab = "Task 2" if task == "acc_task2" else "Task 1"
             ax.plot(soa_ms, err, marker, color=COLORS[cond], alpha=alpha,
-                    markersize=5, label=f"{tlab} | {LABELS[cond]}")
+                    label=f"{tlab} | {LABELS[cond]}")
             ax.fill_between(soa_ms, err - se, err + se,
                             color=COLORS[cond], alpha=0.08)
 
@@ -191,7 +214,7 @@ def plot_error_rates(data, out_base):
     ax.set_ylabel("Error rate")
     ax.set_title(f"Error rates  (p = {p:.2f})")
     ax.set_ylim(bottom=-0.005)
-    ax.legend(ncol=2)
+    ax.legend(ncol=2, frameon=False)
     ax.grid(True, linestyle=":", alpha=0.4)
     _save(fig, out_base)
 
@@ -199,14 +222,14 @@ def plot_error_rates(data, out_base):
 # ===================================================================
 # F5: Strategic deferment — onset delay vs SOA
 # ===================================================================
-def plot_onset_delay(data, out_base):
+def plot_onset_delay(data, out_base, scale=1.15):
     if not data["params"].get("optimize_onset", False):
         return  # greedy runs: nothing to plot
     p = data["params"]["persistence"]
     soa_steps = np.asarray(data["soa"], float)
     soa_ms = steps_to_ms(soa_steps)
 
-    fig, ax = plt.subplots(figsize=(7.5, 4.5))
+    fig, ax = plt.subplots(figsize=(8 * scale, 4.8 * scale))
     for cond in ("dep", "ind"):
         onset = _get(data, cond, "onset2")
         se = np.asarray(
@@ -214,7 +237,7 @@ def plot_onset_delay(data, out_base):
         delay_ms = (onset - soa_steps) * MS_PER_STEP
         se_ms = se * MS_PER_STEP
         ax.plot(soa_ms, delay_ms, "s--", color=COLORS[cond],
-                markersize=5, label=LABELS[cond])
+                label=LABELS[cond])
         ax.fill_between(soa_ms, delay_ms - se_ms, delay_ms + se_ms,
                         color=COLORS[cond], alpha=0.15)
 
@@ -222,7 +245,7 @@ def plot_onset_delay(data, out_base):
     ax.set_xlabel("SOA (ms)")
     ax.set_ylabel("Strategic onset delay (ms)")
     ax.set_title(f"Task 2 engagement delay  (p = {p:.2f})")
-    ax.legend()
+    ax.legend(frameon=False)
     ax.grid(True, linestyle=":", alpha=0.4)
     _save(fig, out_base)
 
@@ -233,10 +256,18 @@ def plot_onset_delay(data, out_base):
 def main():
     ap = argparse.ArgumentParser(description="Plot PRP sweep results (thesis-quality).")
     ap.add_argument("--json", type=str, nargs="+", required=True)
+    ap.add_argument("--context", type=str, choices=list(CONTEXTS),
+                    default="talk", help="Font/figure size preset")
+    ap.add_argument("--rt2_ylim", type=float, nargs=2, default=None,
+                    help="Shared RT2 y-limits across runs, e.g. 440 700")
+    ap.add_argument("--rt1_ylim", type=float, nargs=2, default=None,
+                    help="Shared RT1 y-limits across runs, e.g. 240 340")
     ap.add_argument("--pashler", action="store_true",
                     help="Overlay Pashler (1994) Fig 1 schematic (off by default)")
     ap.add_argument("--out_dir", type=str, default="output/plots/ensemble")
     args = ap.parse_args()
+
+    scale = set_context(args.context)
 
     json_paths = []
     for pattern in args.json:
@@ -249,9 +280,12 @@ def main():
             data = json.load(f)
         tag = data.get("tag", Path(jp).stem)
         plot_main(data, os.path.join(args.out_dir, f"{tag}_main"),
-                  add_pashler=args.pashler)
-        plot_error_rates(data, os.path.join(args.out_dir, "ER", f"{tag}_er"))
-        plot_onset_delay(data, os.path.join(args.out_dir, "onset", f"{tag}_onset"))
+                  scale=scale, add_pashler=args.pashler,
+                  rt1_ylim=args.rt1_ylim, rt2_ylim=args.rt2_ylim)
+        plot_error_rates(data, os.path.join(args.out_dir, "ER", f"{tag}_er"),
+                         scale=scale)
+        plot_onset_delay(data, os.path.join(args.out_dir, "onset",
+                                            f"{tag}_onset"), scale=scale)
 
 
 if __name__ == "__main__":
