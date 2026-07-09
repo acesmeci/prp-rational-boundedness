@@ -4,18 +4,25 @@ Threshold utilities for the LCA readout layer.
 Provides:
 - optimize_lca_threshold_dist: RR threshold sweep on a given output series.
 - compute_fixed_threshold_for_task_meanargmax: per-task fixed z from
-  SINGLE-TASK performance (accuracy-constrained RR argmax).
+  SINGLE-TASK performance. RETAINED AS A DIAGNOSTIC ONLY — not used in the
+  PRP pipeline (single-task calibration is systematically under-set for
+  dual-task demands; see troubleshoot.md 08 Jul 2026, cells a/b).
 - compute_condition_thresholds: per-condition fixed (z1, z2) from DUAL-TASK
-  context (accuracy-constrained RR argmax) — models block-level criterion
-  adaptation: participants raise response caution in dual-task blocks.
-- choose_onset_policy: Task-2 onset policy (paper Eq. 7 style).
+  context, selected against the SESSION'S SOA MIXTURE (see below).
+- choose_onset_policy: Task-2 onset policy (paper Eq. 7 / EVC).
 
-Threshold selection rule (08 Jul 2026):
-    Among thresholds whose mean accuracy across sampled stimuli is
-    >= acc_floor (default 0.99), select the one maximizing mean reward rate.
-    Rationale: PRP instructions make accuracy an instructed constraint that
-    participants satisfice near ceiling; unconstrained RR argmax resolves
-    sampling noise on a flat plateau and can select hair-trigger thresholds.
+Session-level criterion rationale (09 Jul 2026):
+    In standard PRP designs SOA varies randomly within blocks, so an
+    SOA-specific criterion is impossible for a participant to set; and
+    criterion adaptation is empirically block-level, so per-trial fitting
+    grants oracle foresight. What a participant CAN set is one criterion per
+    task role (Task 1 / Task 2 are instructed and known), calibrated to the
+    session's environment as a whole. We therefore select each threshold by
+    accuracy-constrained argmax of the EXPECTED reward-rate curve, pooled
+    over reference SOAs spanning the experimental range (soa_refs) and over
+    stimuli. The accuracy floor is context-appropriate: dual-task selection
+    uses acc_floor ~0.95, matching empirically maintained dual-task accuracy
+    (90-95%), vs ~0.99 for single-task contexts.
 
 Conventions:
 - Task cues are row-major one-hots (index = in_dim * N_pathways + out_dim).
@@ -102,7 +109,7 @@ def _constrained_argmax(thresholds, acc_mean, rr_mean, acc_floor, label="",
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fixed per-task threshold from SINGLE-TASK performance
+# Fixed per-task threshold from SINGLE-TASK performance (DIAGNOSTIC ONLY)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _decode_task(task_vec, input_vec, N_pathways=3, N_features=3):
@@ -133,8 +140,8 @@ def compute_fixed_threshold_for_task_meanargmax(
     acc_floor: float = 0.99,
 ):
     """
-    Fixed z for one task: accuracy-constrained argmax of the mean RR curve
-    over K sustained single-task trials (see module docstring for the rule).
+    Fixed z for one task from sustained single-task trials
+    (accuracy-constrained RR argmax). DIAGNOSTIC ONLY — see module docstring.
     """
     if thresholds is None:
         thresholds = np.arange(0.1, 1.5, 0.1)
@@ -149,8 +156,6 @@ def compute_fixed_threshold_for_task_meanargmax(
 
     rr_curves, acc_curves = [], []
     for k in pick:
-        # Sustained single-task trial (matches PRP trial presentation; a
-        # 1-step series cannot support accumulation under dt/tau = 0.1).
         x = torch.from_numpy(np.tile(X[k][None, :], (n_timesteps, 1)).astype(np.float32))
         t = torch.from_numpy(np.tile(T[k][None, :], (n_timesteps, 1)).astype(np.float32))
         out_th = wrapper.integrate(x, t, persistence=persistence)
@@ -174,14 +179,14 @@ def compute_fixed_threshold_for_task_meanargmax(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fixed per-condition thresholds from DUAL-TASK context
+# Fixed per-condition thresholds from DUAL-TASK context (SOA mixture)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def compute_condition_thresholds(
     wrapper,
     task1_name: str,
     task2_name: str,
-    soa_ref: int = 8,
+    soa_refs=(3, 8, 16),
     n_stim: int = 20,
     thresholds=None,
     ITI=0.5,
@@ -194,23 +199,20 @@ def compute_condition_thresholds(
     noise_std=_DEFAULTS["noise_std"],
     t0=_DEFAULTS["t0"],
     max_timesteps: int = 100,
-    acc_floor: float = 0.99,
+    acc_floor: float = 0.95,
 ):
     """
-    Fixed (z1, z2) for one PRP condition, selected from DUAL-TASK context.
+    Session-level fixed (z1, z2) for one PRP condition, selected from
+    dual-task context against the session's SOA MIXTURE.
 
-    Models block-level criterion adaptation: decision criteria are set per
-    task per block from experienced (dual-task) context, fixed across trials
-    — no per-trial foresight ("oracle"), unlike per-trial fitting.
+    Accuracy and RR curves are pooled over len(soa_refs) reference SOAs x
+    n_stim stimuli; each threshold is then a single accuracy-constrained
+    argmax of the pooled (expected) curves. Models a participant setting one
+    criterion per task role for a mixed-SOA session (see module docstring).
 
-    Procedure (mirrors run_prp_trial's two passes at a reference SOA):
-      1. For each of n_stim sampled trials: build the pass-1 series
-         (stim1 from t=0; stim2 and cue2 from soa_ref; cue1 throughout —
-         greedy onset, matching the policy-off regime). Sweep thresholds
-         for Task 1 on this series; average curves; constrained argmax -> z1.
-      2. Per trial: compute Task-1 RT under z1, gate cue1 off, build the
-         pass-2 series, sweep thresholds for Task 2 on the tail (from
-         soa_ref); average curves; constrained argmax -> z2.
+    Procedure per (soa_ref, stimulus): mirrors run_prp_trial's two passes
+    with greedy Task-2 onset. Pass 1 pools Task-1 curves -> z1; pass 2
+    (gated by Task-1 RT under z1) pools Task-2 tail curves -> z2.
 
     Returns
     -------
@@ -221,6 +223,7 @@ def compute_condition_thresholds(
     if thresholds is None:
         thresholds = np.arange(0.1, 1.5, 0.1)
     thresholds = np.asarray(thresholds)
+    soa_refs = tuple(int(s) for s in soa_refs)
 
     def _integrate(inp_series, cue_series):
         x = np.stack(inp_series, axis=0).astype(np.float32)
@@ -229,31 +232,33 @@ def compute_condition_thresholds(
                                    persistence=persistence)
         return np.stack([o.numpy() for o in out_th], axis=0)
 
-    trials = []
+    trials = []          # (soa_ref, s1, s2, c1, c2, out1, idxs1, corr1)
     rr1, acc1 = [], []
 
-    # ---- Pass 1 per stimulus: Task-1 threshold curves ----
-    for i in range(n_stim):
-        s1, s2, c1, c2 = generate_trial_pair((task1_name, task2_name),
-                                             seed=seed + i)
-        I, T = s1.shape[0], c1.shape[0]
-        inp_series, cue_series = [], []
-        for t in range(max_timesteps):
-            s = np.zeros(I, dtype=np.float32); s += s1
-            if t >= soa_ref: s += s2
-            c = np.zeros(T, dtype=np.float32); c += c1
-            if t >= soa_ref: c += c2          # greedy onset (policy off)
-            inp_series.append(s); cue_series.append(c)
-        out1 = _integrate(inp_series, cue_series)
+    # ---- Pass 1, pooled over soa_refs x stimuli: Task-1 threshold curves ----
+    for r_idx, soa_ref in enumerate(soa_refs):
+        for i in range(n_stim):
+            s1, s2, c1, c2 = generate_trial_pair(
+                (task1_name, task2_name), seed=seed + i + 10000 * r_idx
+            )
+            I, T = s1.shape[0], c1.shape[0]
+            inp_series, cue_series = [], []
+            for t in range(max_timesteps):
+                s = np.zeros(I, dtype=np.float32); s += s1
+                if t >= soa_ref: s += s2
+                c = np.zeros(T, dtype=np.float32); c += c1
+                if t >= soa_ref: c += c2      # greedy onset (policy off)
+                inp_series.append(s); cue_series.append(c)
+            out1 = _integrate(inp_series, cue_series)
 
-        idxs1, corr1 = _decode_task(c1, s1)
-        _, res = optimize_lca_threshold_dist(
-            out1, idxs1, correct_response_idx=corr1,
-            thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
-            dt=dt, tau=tau, noise_std=noise_std,
-        )
-        rr1.append(res["reward_rates"]); acc1.append(res["accuracies"])
-        trials.append((s1, s2, c1, c2, out1, idxs1, corr1))
+            idxs1, corr1 = _decode_task(c1, s1)
+            _, res = optimize_lca_threshold_dist(
+                out1, idxs1, correct_response_idx=corr1,
+                thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
+                dt=dt, tau=tau, noise_std=noise_std,
+            )
+            rr1.append(res["reward_rates"]); acc1.append(res["accuracies"])
+            trials.append((soa_ref, s1, s2, c1, c2, out1, idxs1, corr1))
 
     z1 = _constrained_argmax(thresholds,
                              np.stack(acc1).mean(axis=0),
@@ -262,9 +267,9 @@ def compute_condition_thresholds(
                              label=f"{task1_name}|{task1_name}->{task2_name}",
                              verbose=verbose)
 
-    # ---- Pass 2 per stimulus: Task-2 threshold curves under z1 gating ----
+    # ---- Pass 2, pooled: Task-2 tail curves under z1 gating ----
     rr2, acc2 = [], []
-    for (s1, s2, c1, c2, out1, idxs1, corr1) in trials:
+    for (soa_ref, s1, s2, c1, c2, out1, idxs1, corr1) in trials:
         res1 = run_lca_avg(out1, idxs1, threshold=z1, n_repeats=n_repeats,
                            dt=dt, tau=tau, noise_std=noise_std,
                            correct_response_idx=corr1)
@@ -305,7 +310,7 @@ def compute_condition_thresholds(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Task-2 onset policy (reward-rate optimal onset, paper Eq. 7)
+# Task-2 onset policy (reward-rate optimal onset, paper Eq. 7 / EVC)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def choose_onset_policy(
@@ -313,7 +318,7 @@ def choose_onset_policy(
     input_a, input_b,
     task_a, task_b,
     soa: int = 0,
-    max_onset_delay: int = 5,
+    max_onset_delay: int = 15,
     max_timesteps: int = 100,
     persistence: float = 0.5,
     ITI: float = 0.5,
@@ -327,10 +332,10 @@ def choose_onset_policy(
     thresholds_policy: np.ndarray | None = None,
 ):
     """
-    Reward-rate onset policy for Task-2 (see paper Eq. 7).
+    Reward-rate onset policy for Task-2 (paper Eq. 7; EVC: control-signal
+    onset as a decision variable — Musslick, Shenhav, Botvinick & Cohen 2015).
     RR = (P_corr_1 * P_corr_2) / (ITI + max(RT_1, RT_2_abs)).
-    Emits a warning if the optimum sits at the search-window edge
-    (window too small — cf. MATLAB V2's adaptive window).
+    Warns if the optimum sits at the search-window edge.
     """
     if thresholds_policy is None:
         thresholds_policy = np.linspace(0.1, 0.6, 6)

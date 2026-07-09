@@ -3,24 +3,21 @@
 Run PRP ensemble sweep: train E networks (if missing), run PRP SOA sweeps,
 save results as JSON.
 
-New in v3 (08 Jul 2026):
-- --noise_std: LCA noise sigma, threaded through threshold precompute,
-  per-trial fits, onset policy, and RT measurement (one regime everywhere).
-- --z_context {single,dual}: threshold selection context.
-    single: per-task z from single-task performance (constrained rule);
-            Task 1 uses its own task's z (z_B / z_C) when --fix_z_task1.
-    dual:   per-condition (z1, z2) from dual-task context at a reference SOA
-            (block-level criterion adaptation). Implies fixed thresholds.
-- Tag now encodes noise / context / fix / onset so runs never overwrite.
-- z cache filenames encode task, context, noise (and persistence for dual).
+v4 (09 Jul 2026):
+- Dual-task, session-level threshold selection is now the DEFAULT
+  (--z_context dual): one (z1, z2) per condition, selected by
+  accuracy-constrained expected-RR over the session's SOA mixture
+  (--z_soa_refs) with a context-appropriate floor (--acc_floor_dual, 0.95).
+  Single-task selection retained as a diagnostic (--z_context single).
+- z2 is SHARED across conditions (max over conditions): criterion
+  differences must not confound the representational comparison.
+- --max_onset_delay (default 15) threaded to the onset policy.
 
-Example (three-cell threshold experiment, all ITI=4.0, onset policy off):
+Example (smoke cells d'/f', E=2, p=0.75):
     python -m scripts.run_prp_sweep --store_dir ensemble_ckpt_p09 --E 2 \
         --persistence 0.75 --trials_per_soa 40 --soa_start 1 --soa_end 20 \
-        --soa_step 2 --ITI 4.0 --workers 0 --plot \
-        --fix_z_task1 --z_context single --noise_std 0.2      # cell (a)
-    ... --fix_z_task1 --z_context single --noise_std 0.1      # cell (b)
-    ... --z_context dual --noise_std 0.2                      # cell (c)
+        --soa_step 2 --ITI 4.0 --workers 0 --plot                    # (d')
+    ... same + --optimize_onset                                       # (f')
 """
 import os, json, argparse, time
 from pathlib import Path
@@ -51,17 +48,18 @@ TASK1_BY_COND = {"dep": "B", "ind": "C"}  # Task 2 is always A
 # ===================================================================
 # Naming
 # ===================================================================
-def make_tag(E, persistence, trials_per_soa, soa_start, soa_end, soa_step,
-             dt_lca, ITI, noise_std, z_context, fix_z_task1, optimize_onset):
-    """E{E}_p{p}_nt{nt}_soa{a}-{b}-{s}_step{ms}ms_ITI{iti}_s{noise}_zc{S|D}_fx{0|1}_oo{0|1}"""
-    p_tag = f"{int(round(persistence * 100)):03d}"
-    iti_tag = f"{int(round(ITI * 10)):02d}"
-    s_tag = f"{int(round(noise_std * 100)):03d}"
-    zc_tag = "D" if z_context == "dual" else "S"
-    return (f"E{E}_p{p_tag}_nt{trials_per_soa}"
-            f"_soa{soa_start}-{soa_end}-{soa_step}"
+def make_tag(args):
+    p_tag = f"{int(round(args.persistence * 100)):03d}"
+    iti_tag = f"{int(round(args.ITI * 10)):02d}"
+    s_tag = f"{int(round(args.noise_std * 100)):03d}"
+    zc_tag = "D" if args.z_context == "dual" else "S"
+    af_tag = f"{int(round(args.acc_floor_dual * 100)):02d}"
+    return (f"E{args.E}_p{p_tag}_nt{args.trials_per_soa}"
+            f"_soa{args.soa_start}-{args.soa_end}-{args.soa_step}"
             f"_step{MS_PER_STEP:03d}ms_ITI{iti_tag}"
-            f"_s{s_tag}_zc{zc_tag}_fx{int(fix_z_task1)}_oo{int(optimize_onset)}")
+            f"_s{s_tag}_zc{zc_tag}_af{af_tag}"
+            f"_fx{int(args.fix_z_task1)}_oo{int(args.optimize_onset)}"
+            f"_od{args.max_onset_delay}")
 
 
 def _noise_tag(noise_std):
@@ -105,11 +103,13 @@ def _get_single_task_z(wrapper, store_dir, net_idx, task_name, thresholds,
 
 def _get_condition_zs(wrapper, store_dir, net_idx, task1_name, task2_name,
                       thresholds, ITI, z_repeats, noise_std, persistence,
-                      soa_ref, seed):
+                      soa_refs, acc_floor, seed):
+    refs_tag = "-".join(str(int(s)) for s in soa_refs)
     path = os.path.join(
         store_dir,
         f"net_{net_idx:02d}_zpair_{task1_name}{task2_name}_dual"
-        f"_p{int(round(persistence*100)):03d}_s{_noise_tag(noise_std)}.json"
+        f"_p{int(round(persistence*100)):03d}_s{_noise_tag(noise_std)}"
+        f"_af{int(round(acc_floor*100)):02d}_ref{refs_tag}.json"
     )
     if os.path.exists(path):
         with open(path) as f:
@@ -117,10 +117,10 @@ def _get_condition_zs(wrapper, store_dir, net_idx, task1_name, task2_name,
         return float(d["z1"]), float(d["z2"])
     z1, z2 = compute_condition_thresholds(
         wrapper, task1_name, task2_name,
-        soa_ref=soa_ref, n_stim=20,
+        soa_refs=soa_refs, n_stim=20,
         thresholds=thresholds, ITI=ITI, n_repeats=z_repeats,
         persistence=persistence, seed=seed, verbose=False,
-        noise_std=noise_std,
+        noise_std=noise_std, acc_floor=acc_floor,
     )
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
@@ -137,7 +137,8 @@ def per_network_job(
     z_task, z_K, z_repeats, thresholds, ITI,
     prp_persistence, prp_trials_per_soa, prp_soa,
     dt_lca, t0, optimize_onset,
-    fix_z_task1, z_context, noise_std, z_soa_ref,
+    fix_z_task1, z_context, noise_std,
+    z_soa_refs, acc_floor_dual, max_onset_delay,
 ):
     t_start = time.time()
     model_path = os.path.join(store_dir, f"net_{net_idx:02d}.pt")
@@ -160,10 +161,18 @@ def per_network_job(
             z1, z2 = _get_condition_zs(
                 wrapper, store_dir, net_idx, t1, z_task,
                 thresholds, ITI, z_repeats, noise_std,
-                prp_persistence, z_soa_ref, seed=1000 + net_idx,
+                prp_persistence, z_soa_refs, acc_floor_dual,
+                seed=1000 + net_idx,
             )
             cond_zs[cond] = (z1, z2)
-            print(f"  [net {net_idx:02d}] {t1}->A dual-context z1={z1:.2f}, z2={z2:.2f}")
+            print(f"  [net {net_idx:02d}] {t1}->A dual-context "
+                  f"z1={z1:.2f}, z2={z2:.2f}")
+        # Shared Task-2 criterion across conditions (experimental control:
+        # criterion differences must not confound the representational
+        # comparison). Worst-case: caution set for the hardest condition.
+        z2_shared = max(cond_zs[c][1] for c in cond_zs)
+        cond_zs = {c: (cond_zs[c][0], z2_shared) for c in cond_zs}
+        print(f"  [net {net_idx:02d}] shared z2 = {z2_shared:.2f}")
     else:
         z_A = _get_single_task_z(wrapper, store_dir, net_idx, z_task,
                                  thresholds, ITI, z_K, z_repeats,
@@ -177,7 +186,8 @@ def per_network_job(
                 z1 = None  # legacy per-trial fitting
             cond_zs[cond] = (z1, z_A)
             z1_str = f"{z1:.2f}" if z1 is not None else "per-trial"
-            print(f"  [net {net_idx:02d}] {t1}->A single-context z1={z1_str}, z2={z_A:.2f}")
+            print(f"  [net {net_idx:02d}] {t1}->A single-context "
+                  f"z1={z1_str}, z2={z_A:.2f}")
 
     # 3) PRP sweeps
     gens = {"dep": lambda: generate_trial_pair(("B", "A")),
@@ -193,6 +203,7 @@ def per_network_job(
             dt_lca=dt_lca, t0=t0, ITI=ITI, noise_std=noise_std,
             z_task1_fixed=z1, z_task2_fixed=z2,
             optimize_onset=optimize_onset,
+            max_onset_delay=max_onset_delay,
         )
 
     print(f"  [net {net_idx:02d}] Done in {time.time() - t_start:.1f}s")
@@ -207,15 +218,14 @@ def run_ensemble(args):
     os.makedirs(store_dir, exist_ok=True)
 
     soa_list = list(range(args.soa_start, args.soa_end + 1, args.soa_step))
-    tag = make_tag(args.E, args.persistence, args.trials_per_soa,
-                   args.soa_start, args.soa_end, args.soa_step,
-                   args.dt_lca, args.ITI, args.noise_std, args.z_context,
-                   args.fix_z_task1, args.optimize_onset)
+    tag = make_tag(args)
 
     print(f"\n{'='*60}\nPRP Ensemble Sweep: {tag}\n{'='*60}")
     print(f"  Networks: {args.E} | p={args.persistence} | ITI={args.ITI}s "
           f"| sigma={args.noise_std} | z_context={args.z_context} "
-          f"| fix_z1={args.fix_z_task1} | onset_optim={args.optimize_onset}")
+          f"| acc_floor_dual={args.acc_floor_dual}")
+    print(f"  z_soa_refs: {args.z_soa_refs} | fix_z1={args.fix_z_task1} "
+          f"| onset_optim={args.optimize_onset} (window {args.max_onset_delay})")
     print(f"  SOA: {soa_list[0]}-{soa_list[-1]} step {args.soa_step} "
           f"({soa_list[0]*MS_PER_STEP:.0f}-{soa_list[-1]*MS_PER_STEP:.0f} ms) "
           f"| trials/SOA: {args.trials_per_soa} | workers: {args.workers}")
@@ -229,7 +239,8 @@ def run_ensemble(args):
         np.arange(*args.thresholds), args.ITI,
         args.persistence, args.trials_per_soa, soa_list,
         args.dt_lca, args.t0, args.optimize_onset,
-        args.fix_z_task1, args.z_context, args.noise_std, args.z_soa_ref,
+        args.fix_z_task1, args.z_context, args.noise_std,
+        tuple(args.z_soa_refs), args.acc_floor_dual, args.max_onset_delay,
     )
 
     if args.workers > 0:
@@ -274,9 +285,11 @@ def run_ensemble(args):
             "soa_step": args.soa_step,
             "dt_lca": args.dt_lca, "t0": args.t0, "ITI": args.ITI,
             "noise_std": args.noise_std, "z_context": args.z_context,
+            "z_soa_refs": list(args.z_soa_refs),
+            "acc_floor_dual": args.acc_floor_dual,
             "fix_z_task1": args.fix_z_task1,
             "optimize_onset": args.optimize_onset,
-            "z_soa_ref": args.z_soa_ref,
+            "max_onset_delay": args.max_onset_delay,
             "ms_per_step": MS_PER_STEP,
         },
         "soa": soa_list,
@@ -319,22 +332,26 @@ def parse_args():
     p.add_argument("--train_epochs", type=int, default=5000)
     p.add_argument("--stop_loss", type=float, default=1e-3)
 
-    # Threshold
+    # Threshold selection
     p.add_argument("--z_task", type=str, default="A")
     p.add_argument("--z_K", type=int, default=27)
     p.add_argument("--z_repeats", type=int, default=100)
     p.add_argument("--thresholds", type=float, nargs=3, default=[0.1, 1.5, 0.1])
-    p.add_argument("--fix_z_task1", action="store_true",
-                   help="Fixed Task-1 threshold from its own single-task "
-                        "precompute (z_B / z_C) instead of per-trial fitting. "
-                        "Ignored (always fixed) when --z_context dual.")
     p.add_argument("--z_context", type=str, choices=["single", "dual"],
-                   default="single",
-                   help="Threshold selection context: single-task (default) "
-                        "or dual-task condition-level (block-level criterion "
-                        "adaptation).")
-    p.add_argument("--z_soa_ref", type=int, default=8,
-                   help="Reference SOA (steps) for dual-context selection.")
+                   default="dual",
+                   help="dual (default): session-level (z1,z2) per condition "
+                        "from dual-task SOA-mixture context, z2 shared across "
+                        "conditions. single: legacy single-task selection "
+                        "(diagnostic only).")
+    p.add_argument("--z_soa_refs", type=int, nargs="+", default=[3, 8, 16],
+                   help="Reference SOAs (steps) pooled for session-level "
+                        "dual-context selection.")
+    p.add_argument("--acc_floor_dual", type=float, default=0.95,
+                   help="Accuracy floor for dual-context selection "
+                        "(empirical dual-task accuracy: 90-95%%).")
+    p.add_argument("--fix_z_task1", action="store_true",
+                   help="[single context only] fixed z_B/z_C for Task 1 "
+                        "instead of per-trial fitting.")
 
     # PRP sweep
     p.add_argument("--persistence", type=float, default=0.80)
@@ -347,10 +364,13 @@ def parse_args():
     p.add_argument("--dt_lca", type=float, default=_DEFAULTS["dt"])
     p.add_argument("--t0", type=float, default=_DEFAULTS["t0"])
     p.add_argument("--ITI", type=float, default=0.5)
-    p.add_argument("--noise_std", type=float, default=_DEFAULTS["noise_std"],
-                   help="LCA noise sigma (default from lca._DEFAULTS = 0.2).")
+    p.add_argument("--noise_std", type=float, default=_DEFAULTS["noise_std"])
 
+    # Onset policy
     p.add_argument("--optimize_onset", action="store_true")
+    p.add_argument("--max_onset_delay", type=int, default=15,
+                   help="Onset-policy search window (steps beyond SOA).")
+
     p.add_argument("--plot", action="store_true")
     return p.parse_args()
 

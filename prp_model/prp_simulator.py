@@ -49,7 +49,7 @@ def run_prp_trial(
     optimize_onset: bool = False,
     policy_n_repeats: int = 30,
     thresholds_policy: np.ndarray | None = None,
-    max_onset_delay: int = 5,
+    max_onset_delay: int = 15, # If optim never chooses values on the higher end try 10 for compute efficiency
     return_outputs: bool = False,
 ):
     """
@@ -191,6 +191,7 @@ def sweep_soa(
     noise_std: float = _DEFAULTS["noise_std"],
     ITI: float = 0.5,
     optimize_onset: bool = False,
+    max_onset_delay: int = 15, # try 10
     thresholds=np.arange(0.1, 1.6, 0.1),
 ):
     """
@@ -220,7 +221,7 @@ def sweep_soa(
                 thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
                 z_task1_fixed=z_task1_fixed, z_task2_fixed=z_task2_fixed,
                 dt_lca=dt_lca, tau=tau, t0=t0, noise_std=noise_std,
-                optimize_onset=optimize_onset,
+                optimize_onset=optimize_onset, max_onset_delay=max_onset_delay 
             )
 
             d1.append(tr["decided1"])
