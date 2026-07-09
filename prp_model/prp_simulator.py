@@ -192,6 +192,7 @@ def sweep_soa(
     ITI: float = 0.5,
     optimize_onset: bool = False,
     max_onset_delay: int = 15, # try 10
+    base_seed: int = 0,
     thresholds=np.arange(0.1, 1.6, 0.1),
 ):
     """
@@ -213,8 +214,8 @@ def sweep_soa(
         r2, a2, d2 = [], [], []
         onsets, r2_tail, r2_from_stim, r2_from_stim_c = [], [], [], []
 
-        for _ in range(n_trials_per_soa):
-            s1, s2, c1, c2 = trial_generator()
+        for j in range(n_trials_per_soa):
+            s1, s2, c1, c2 = trial_generator(base_seed + soa * 1000 + j)
             tr = run_prp_trial(
                 task_net, s1, s2, c1, c2, soa,
                 max_timesteps=max_timesteps, persistence=persistence,

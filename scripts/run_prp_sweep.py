@@ -110,6 +110,7 @@ def _get_condition_zs(wrapper, store_dir, net_idx, task1_name, task2_name,
         f"net_{net_idx:02d}_zpair_{task1_name}{task2_name}_dual"
         f"_p{int(round(persistence*100)):03d}_s{_noise_tag(noise_std)}"
         f"_af{int(round(acc_floor_task1*100)):02d}-{int(round(acc_floor*100)):02d}"
+        f"_iti{int(round(ITI*10)):02d}"
         f"_ref{refs_tag}.json"
     )
     if os.path.exists(path):
@@ -144,6 +145,7 @@ def per_network_job(
     max_onset_delay,
 ):
     t_start = time.time()
+    np.random.seed(777000 + net_idx)   # pins LCA noise per network (serial within job)
     model_path = os.path.join(store_dir, f"net_{net_idx:02d}.pt")
 
     # 1) Load or train
@@ -193,8 +195,8 @@ def per_network_job(
                   f"z1={z1_str}, z2={z_A:.2f}")
 
     # 3) PRP sweeps
-    gens = {"dep": lambda: generate_trial_pair(("B", "A")),
-            "ind": lambda: generate_trial_pair(("C", "A"))}
+    gens = {"dep": lambda seed: generate_trial_pair(("B", "A"), seed=seed),
+            "ind": lambda seed: generate_trial_pair(("C", "A"), seed=seed)}
     out = {"net_idx": net_idx,
            "z": {c: {"z1": cond_zs[c][0], "z2": cond_zs[c][1]} for c in cond_zs}}
     for cond in ("dep", "ind"):
@@ -207,6 +209,7 @@ def per_network_job(
             z_task1_fixed=z1, z_task2_fixed=z2,
             optimize_onset=optimize_onset,
             max_onset_delay=max_onset_delay,
+            base_seed= 500000 + net_idx * 100000
         )
 
     print(f"  [net {net_idx:02d}] Done in {time.time() - t_start:.1f}s")
