@@ -243,7 +243,8 @@ def run_ensemble(args):
         args.persistence, args.trials_per_soa, soa_list,
         args.dt_lca, args.t0, args.optimize_onset,
         args.fix_z_task1, args.z_context, args.noise_std,
-        tuple(args.z_soa_refs), args.acc_floor_dual, args.max_onset_delay,
+        tuple(args.z_soa_refs), args.acc_floor_dual, args.acc_floor_task1,
+        args.max_onset_delay,
     )
 
     if args.workers > 0:
@@ -355,7 +356,7 @@ def parse_args():
                         "(empirical dual-task accuracy: 90-95%%).")
     p.add_argument("--acc_floor_task1", type=float, default=0.99,
                    help="Accuracy floor for Task 1 (the protected task; "
-                        "empirical T1 accuracy 97-99%).")
+                        "empirical T1 accuracy 97-99%%).")
     p.add_argument("--fix_z_task1", action="store_true",
                    help="[single context only] fixed z_B/z_C for Task 1 "
                         "instead of per-trial fitting.")
