@@ -3,36 +3,13 @@
 PRP (Psychological Refractory Period) simulation helpers.
 
 Runs dual-task (PRP) trials on a trained TaskNetworkWrapper and aggregates
-results across SOAs.
+results across SOAs. See run_prp_trial for trial structure; conventions
+unchanged from 08 Jul 2026 refactor (dict returns; graded P(correct);
+correct-trials-only RT fields; Task-2 readout from cue onset with
+stimulus-locked rt2_from_stim as the reported measure).
 
-Conventions (matches paper/MATLAB):
-- Task cues use ROW-MAJOR indexing: index = (input_dim * N_pathways) + output_dim.
-- SOA is measured in LCA STEPS. One step = dt_lca sim-seconds = MS_PER_STEP
-  display-milliseconds.
-- Stimuli follow the partial-stimulus design (Musslick et al., 2023, p. 68):
-  each task's stimulus activates only its task-relevant dimension; stim2 is
-  superimposed at the SOA.
-- Task-1 cue is ON from t=0 until its decision time; then it is turned OFF.
-- Task-2 cue is OFF until its onset (SOA or policy-chosen); then it stays ON.
-- Task-2 LCA readout starts at the Task-2 cue onset (onset2), NOT at the SOA:
-  evidence accumulation for Task 2 begins when control engages the task. The
-  strategic delay (onset2 - soa) is instead counted in the stimulus-locked
-  reaction time rt2_from_stim, which is the paper-faithful dependent measure.
-
-RT semantics:
-- Fields WITHOUT the _correct suffix are means over ALL decided LCA repeats
-  (errors included). The all-decided Task-1 RT also determines the cue-gating
-  time (the response occurs when it occurs, right or wrong).
-- Fields WITH the _correct suffix are means over CORRECT repeats only —
-  the empirical-convention dependent measure (PRP analyses report RTs on
-  correct trials). These are the values to report in results.
-
-Accuracy semantics:
-- acc_task1 / acc_task2 are graded P(correct): the fraction of stochastic LCA
-  repeats (within the trial) on which the correct accumulator crossed first.
-- decided_task1 / decided_task2 are the fractions of LCA repeats on which ANY
-  accumulator crossed threshold (non-decisions are excluded from RT and
-  accuracy, so these fields make that exclusion visible).
+noise_std is threaded through ALL threshold fits and RT measurements so the
+same LCA noise regime governs selection and measurement.
 """
 
 import numpy as np
@@ -41,7 +18,6 @@ import torch
 from prp_model.lca import run_lca_avg, _DEFAULTS
 from prp_model.threshold_utils import optimize_lca_threshold_dist, choose_onset_policy
 
-# Number of stochastic LCA runs used when averaging within a trial
 DEFAULT_N_REPEATS = 100
 
 
@@ -69,6 +45,7 @@ def run_prp_trial(
     dt_lca: float = _DEFAULTS["dt"],
     tau: float = _DEFAULTS["tau"],
     t0: float = _DEFAULTS["t0"],
+    noise_std: float = _DEFAULTS["noise_std"],
     optimize_onset: bool = False,
     policy_n_repeats: int = 30,
     thresholds_policy: np.ndarray | None = None,
@@ -76,50 +53,16 @@ def run_prp_trial(
     return_outputs: bool = False,
 ):
     """
-    Simulate a single PRP trial with explicit Task-1 then Task-2.
-
-    Two-pass procedure:
-      (1) Integrate with Task-1 from t=0 and Task-2 from onset to obtain
-          Task-1 RT.
-      (2) Rebuild the series with Task-1 turned OFF after its decision time
-          and evaluate Task-2 on the tail (time >= onset2).
-
-    Parameters (selected)
-    ---------------------
-    z_task1_fixed : float | None
-        If provided, fixes Task-1's threshold (precomputed from single-task
-        performance, recommended). If None, a reward-rate maximizing threshold
-        is fit per-trial on the dual-task output series (legacy behavior;
-        expensive and criterion adapts to interference level).
-        TODO(design): decide with Sebastian / MATLAB check whether per-trial
-        fitting should be removed entirely.
-    z_task2_fixed : float | None
-        If provided, fixes Task-2's threshold (recommended: precomputed z_A).
-    dt_lca, tau, t0 : float
-        LCA timing parameters, defaulting to lca._DEFAULTS (dt/tau = 0.1).
-        These are threaded through ALL threshold fits and RT measurements so
-        selection and measurement always run under identical dynamics.
-    return_outputs : bool
-        If True, include the pass-2 output time series under key "outputs"
-        (memory-heavy; keep False in sweeps).
+    Simulate a single PRP trial (two-pass; see module docstring).
 
     Returns
     -------
     dict with keys:
-        rt1              : float | None  Task-1 RT, all decided repeats (sim-s)
-        rt1_correct      : float | None  Task-1 RT, correct repeats only
-        acc1             : float | None  Task-1 P(correct) over decided repeats
-        decided1         : float         fraction of repeats with a T1 decision
-        rt2_abs          : float | None  Task-2 RT from trial onset (all decided)
-        rt2_from_stim    : float | None  Task-2 RT from S2 onset (all decided)
-        rt2_tail         : float | None  Task-2 RT from cue-2 onset (all decided)
-        rt2_from_stim_correct : float | None  Task-2 RT from S2 onset,
-                                              correct repeats only (REPORT THIS)
-        acc2             : float | None  Task-2 P(correct) over decided repeats
-        decided2         : float         fraction of repeats with a T2 decision
-        onset2           : int           Task-2 cue onset actually used (steps)
-        z1, z2           : float         thresholds used for Task-1 / Task-2
-        outputs          : np.ndarray | None  pass-2 output series (if requested)
+        rt1, rt1_correct, acc1, decided1,
+        rt2_abs, rt2_from_stim, rt2_tail, rt2_from_stim_correct,
+        acc2, decided2, onset2, z1, z2, outputs
+    (semantics as documented in the 08 Jul 2026 refactor; rt*_correct are
+    the empirical-convention correct-trials-only measures.)
     """
 
     def _integrate(input_series, task_series):
@@ -136,6 +79,7 @@ def run_prp_trial(
             task_net, stim1, stim2, cue1, cue2,
             soa=soa, max_onset_delay=max_onset_delay, max_timesteps=max_timesteps,
             persistence=persistence, ITI=ITI, dt_lca=dt_lca, t0=t0, tau=tau,
+            noise_std=noise_std,
             z_a_fixed=z_task1_fixed, z_b_fixed=z_task2_fixed,
             policy_n_repeats=policy_n_repeats,
             thresholds_policy=thresholds_policy,
@@ -163,16 +107,16 @@ def run_prp_trial(
         z1, _ = optimize_lca_threshold_dist(
             out1, idxs1, correct_response_idx=corr1,
             thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
-            dt=dt_lca, tau=tau,
+            dt=dt_lca, tau=tau, noise_std=noise_std,
         )
     res1 = run_lca_avg(
         out1, idxs1, threshold=z1, n_repeats=n_repeats,
-        dt=dt_lca, tau=tau, correct_response_idx=corr1,
+        dt=dt_lca, tau=tau, noise_std=noise_std, correct_response_idx=corr1,
     )
     rt1 = res1["rt"]
 
-    # Convert Task-1 RT (sim-seconds) to the step index for gating the cue off.
-    # Uses the all-decided mean: the response occurs when it occurs, right or wrong.
+    # Cue-gating time from the all-decided mean RT (response occurs when it
+    # occurs, right or wrong).
     t_off1 = int(np.ceil(max(0.0, (rt1 - t0) / dt_lca))) if rt1 is not None else max_timesteps
 
     # --- 2) Pass 2: turn OFF Task-1 after its decision -> evaluate Task-2 tail ---
@@ -187,7 +131,7 @@ def run_prp_trial(
     out2 = _integrate(inp_series, cue_series)
 
     idxs2, corr2 = _decode(cue2, stim2)
-    tail = out2[onset2:]                # readout starts at task engagement (see module docstring)
+    tail = out2[onset2:]                # readout starts at task engagement
 
     result = {
         "rt1": rt1, "rt1_correct": res1["rt_correct"],
@@ -207,7 +151,7 @@ def run_prp_trial(
         z2, _ = optimize_lca_threshold_dist(
             tail, idxs2, correct_response_idx=corr2,
             thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
-            dt=dt_lca, tau=tau,
+            dt=dt_lca, tau=tau, noise_std=noise_std,
         )
     else:
         z2 = z_task2_fixed
@@ -215,7 +159,7 @@ def run_prp_trial(
 
     res2 = run_lca_avg(
         tail, idxs2, threshold=z2, n_repeats=n_repeats,
-        dt=dt_lca, tau=tau, correct_response_idx=corr2,
+        dt=dt_lca, tau=tau, noise_std=noise_std, correct_response_idx=corr2,
     )
 
     if res2["rt"] is not None:
@@ -223,7 +167,6 @@ def run_prp_trial(
         result["rt2_abs"] = res2["rt"] + onset2 * dt_lca
         result["rt2_from_stim"] = res2["rt"] + (onset2 - soa) * dt_lca
     if res2["rt_correct"] is not None:
-        # Paper-faithful, empirical-convention dependent measure.
         result["rt2_from_stim_correct"] = res2["rt_correct"] + (onset2 - soa) * dt_lca
     result["acc2"] = res2["p_correct"]
     result["decided2"] = res2["frac_decided"]
@@ -245,28 +188,15 @@ def sweep_soa(
     dt_lca: float = _DEFAULTS["dt"],
     tau: float = _DEFAULTS["tau"],
     t0: float = _DEFAULTS["t0"],
+    noise_std: float = _DEFAULTS["noise_std"],
     ITI: float = 0.5,
     optimize_onset: bool = False,
     thresholds=np.arange(0.1, 1.6, 0.1),
 ):
     """
     Run PRP simulations across a list of SOAs and aggregate RT/ACC.
-
-    Returns
-    -------
-    dict
-        Keys (each a per-SOA list of means across valid trials, NaN if none):
-          "soa",
-          "rt_task1", "rt_task1_correct", "acc_task1", "decided_task1",
-          "rt_task2", "acc_task2", "decided_task2",
-          "onset2", "rt_task2_tail", "rt_task2_from_stim",
-          "rt_task2_from_stim_correct"
-        RT/accuracy means include only trials where the corresponding task
-        produced at least one decided LCA repeat; "decided_task*" reports the
-        mean decided fraction over ALL trials, making exclusions visible.
-        rt_task2_from_stim_correct is the empirical-convention dependent
-        measure (correct trials only) and should be used for reported curves
-        and slope analyses.
+    Returns per-SOA means (see 08 Jul 2026 refactor docs);
+    rt_task2_from_stim_correct is the reported dependent measure.
     """
     keys = (
         "soa",
@@ -289,7 +219,7 @@ def sweep_soa(
                 max_timesteps=max_timesteps, persistence=persistence,
                 thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
                 z_task1_fixed=z_task1_fixed, z_task2_fixed=z_task2_fixed,
-                dt_lca=dt_lca, tau=tau, t0=t0,
+                dt_lca=dt_lca, tau=tau, t0=t0, noise_std=noise_std,
                 optimize_onset=optimize_onset,
             )
 
