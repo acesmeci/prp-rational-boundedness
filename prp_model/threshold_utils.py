@@ -200,6 +200,7 @@ def compute_condition_thresholds(
     t0=_DEFAULTS["t0"],
     max_timesteps: int = 100,
     acc_floor: float = 0.95,
+    acc_floor_task1: float = 0.99,   # <-- NEW: Task 1 is the protected task
 ):
     """
     Session-level fixed (z1, z2) for one PRP condition, selected from
@@ -263,7 +264,7 @@ def compute_condition_thresholds(
     z1 = _constrained_argmax(thresholds,
                              np.stack(acc1).mean(axis=0),
                              np.stack(rr1).mean(axis=0),
-                             acc_floor,
+                             acc_floor_task1,
                              label=f"{task1_name}|{task1_name}->{task2_name}",
                              verbose=verbose)
 

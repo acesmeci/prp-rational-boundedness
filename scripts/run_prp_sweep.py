@@ -103,13 +103,14 @@ def _get_single_task_z(wrapper, store_dir, net_idx, task_name, thresholds,
 
 def _get_condition_zs(wrapper, store_dir, net_idx, task1_name, task2_name,
                       thresholds, ITI, z_repeats, noise_std, persistence,
-                      soa_refs, acc_floor, seed):
+                      soa_refs, acc_floor, acc_floor_task1, seed):
     refs_tag = "-".join(str(int(s)) for s in soa_refs)
     path = os.path.join(
         store_dir,
         f"net_{net_idx:02d}_zpair_{task1_name}{task2_name}_dual"
         f"_p{int(round(persistence*100)):03d}_s{_noise_tag(noise_std)}"
-        f"_af{int(round(acc_floor*100)):02d}_ref{refs_tag}.json"
+        f"_af{int(round(acc_floor_task1*100)):02d}-{int(round(acc_floor*100)):02d}"
+        f"_ref{refs_tag}.json"
     )
     if os.path.exists(path):
         with open(path) as f:
@@ -121,6 +122,7 @@ def _get_condition_zs(wrapper, store_dir, net_idx, task1_name, task2_name,
         thresholds=thresholds, ITI=ITI, n_repeats=z_repeats,
         persistence=persistence, seed=seed, verbose=False,
         noise_std=noise_std, acc_floor=acc_floor,
+        acc_floor_task1=acc_floor_task1,
     )
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
@@ -138,7 +140,8 @@ def per_network_job(
     prp_persistence, prp_trials_per_soa, prp_soa,
     dt_lca, t0, optimize_onset,
     fix_z_task1, z_context, noise_std,
-    z_soa_refs, acc_floor_dual, max_onset_delay,
+    z_soa_refs, acc_floor_dual, acc_floor_task1,
+    max_onset_delay,
 ):
     t_start = time.time()
     model_path = os.path.join(store_dir, f"net_{net_idx:02d}.pt")
@@ -162,7 +165,7 @@ def per_network_job(
                 wrapper, store_dir, net_idx, t1, z_task,
                 thresholds, ITI, z_repeats, noise_std,
                 prp_persistence, z_soa_refs, acc_floor_dual,
-                seed=1000 + net_idx,
+                acc_floor_task1, seed=1000 + net_idx,
             )
             cond_zs[cond] = (z1, z2)
             print(f"  [net {net_idx:02d}] {t1}->A dual-context "
@@ -287,6 +290,7 @@ def run_ensemble(args):
             "noise_std": args.noise_std, "z_context": args.z_context,
             "z_soa_refs": list(args.z_soa_refs),
             "acc_floor_dual": args.acc_floor_dual,
+            "acc_floor_task1": args.acc_floor_task1,
             "fix_z_task1": args.fix_z_task1,
             "optimize_onset": args.optimize_onset,
             "max_onset_delay": args.max_onset_delay,
@@ -349,6 +353,9 @@ def parse_args():
     p.add_argument("--acc_floor_dual", type=float, default=0.95,
                    help="Accuracy floor for dual-context selection "
                         "(empirical dual-task accuracy: 90-95%%).")
+    p.add_argument("--acc_floor_task1", type=float, default=0.99,
+                   help="Accuracy floor for Task 1 (the protected task; "
+                        "empirical T1 accuracy 97-99%).")
     p.add_argument("--fix_z_task1", action="store_true",
                    help="[single context only] fixed z_B/z_C for Task 1 "
                         "instead of per-trial fitting.")
