@@ -124,8 +124,8 @@ def main():
     fig, ax = plt.subplots(figsize=(8.5 * scale, 5.2 * scale))
 
     lo, hi = sorted(args.empirical_band)
-    ax.axhspan(lo, hi, color="gray", alpha=0.12, zorder=0,
-               label="Empirical head-slope range (Ch. 2)")
+    ax.axhspan(-1.10, -0.40, color="gray", alpha=0.18, zorder=0,
+               label="Empirical head-slope range")
     ax.axhline(-1.0, color="gray", linestyle="--", linewidth=1.0, zorder=1)
     ax.text(ax.get_xlim()[0], -1.0, " slope = \u22121", color="gray",
             va="bottom", fontsize=plt.rcParams["font.size"] - 2)
@@ -148,7 +148,7 @@ def main():
     ax.set_xlabel("Persistence p")
     ax.set_ylabel("Head slope (\u0394RT2 / \u0394SOA)")
     ax.set_title("Task 2 head slope by persistence, condition, and strategy")
-    ax.legend(frameon=False, loc="lower left")
+    ax.legend(frameon=False, loc="lower right")
     ax.grid(True, linestyle=":", alpha=0.4)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
