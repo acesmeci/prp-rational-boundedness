@@ -35,3 +35,11 @@ prp_literature_tracker.md
 
 # legacy threshold z jsons
 legacy/
+
+# Ensemble run logs
+extras.log
+finals.log
+
+# Codebase summary
+CODEBASE_SUMMARY.md
+
