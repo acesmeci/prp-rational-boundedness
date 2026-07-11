@@ -86,6 +86,12 @@ def two_shortest_slope(soa_ms, rt_ms):
         return np.nan
     return float((r[1] - r[0]) / (s[1] - s[0]))
 
+def two_longest_slope(soa_ms, rt_ms):
+    order = np.argsort(soa_ms)
+    s, r = np.asarray(soa_ms)[order][-2:], np.asarray(rt_ms)[order][-2:]
+    if len(s) < 2 or not np.isfinite(r).all():
+        return np.nan
+    return float((r[1] - r[0]) / (s[1] - s[0]))
 
 def soa_star_ms(data, cond="dep"):
     """SOA* = SOA_STAR_FACTOR x mean correct-trials RT1, in ms."""
@@ -157,6 +163,7 @@ def plot_main(data, out_base, scale=1.15, add_pashler=False,
         se = sim_seconds_to_ms(
             data["avg"][cond].get(rt2_key + "_se", np.zeros(len(soa_ms))))
         ts = two_shortest_slope(soa_ms, mean)
+        tl = two_longest_slope(soa_ms, mean)
         head, tail = (head_tail_slopes(soa_ms, mean, star)
                       if np.isfinite(star) else (np.nan, np.nan))
         ax2.plot(soa_ms, mean, "x--", color=COLORS[cond],
@@ -165,6 +172,7 @@ def plot_main(data, out_base, scale=1.15, add_pashler=False,
                          color=COLORS[cond], alpha=0.15)
         console.append(f"  {cond}: 2-shortest {ts:.2f} | head {head:.2f} "
                        f"| tail {tail:.2f}")
+        console.append(f"  {cond}: 2-longest {tl:.2f}")
 
     if np.isfinite(star):
         ax2.axvline(star, color="gray", linestyle=":", linewidth=1.2)
