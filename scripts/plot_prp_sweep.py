@@ -141,9 +141,8 @@ def plot_main(data, out_base, scale=1.15, add_pashler=False,
         mean = sim_seconds_to_ms(_get(data, cond, rt1_key))
         se = sim_seconds_to_ms(
             data["avg"][cond].get(rt1_key + "_se", np.zeros(len(soa_ms))))
-        ax1.plot(soa_ms, mean, "o--", color=COLORS[cond], label=LABELS[cond])
-        ax1.fill_between(soa_ms, mean - se, mean + se,
-                         color=COLORS[cond], alpha=0.15)
+        ax1.errorbar(soa_ms, mean, yerr=se, fmt="o-", color=COLORS[cond],
+                     capsize=3, label=LABELS[cond])
     ax1.set_xlabel("SOA (ms)")
     ax1.set_ylabel("RT1 (ms)")
     ax1.set_title(f"Task 1 RT  (p = {p:.2f})")
@@ -166,10 +165,9 @@ def plot_main(data, out_base, scale=1.15, add_pashler=False,
         tl = two_longest_slope(soa_ms, mean)
         head, tail = (head_tail_slopes(soa_ms, mean, star)
                       if np.isfinite(star) else (np.nan, np.nan))
-        ax2.plot(soa_ms, mean, "x--", color=COLORS[cond],
-                 label=f"{LABELS[cond]}, head slope {head:.2f}")
-        ax2.fill_between(soa_ms, mean - se, mean + se,
-                         color=COLORS[cond], alpha=0.15)
+        ax2.errorbar(soa_ms, mean, yerr=se, fmt="o-", color=COLORS[cond],
+                     capsize=3,
+                     label=f"{LABELS[cond]}, slope\u2082 = {ts:.2f}")
         console.append(f"  {cond}: 2-shortest {ts:.2f} | head {head:.2f} "
                        f"| tail {tail:.2f}")
         console.append(f"  {cond}: 2-longest {tl:.2f}")
@@ -205,18 +203,17 @@ def plot_error_rates(data, out_base, scale=1.15):
 
     fig, ax = plt.subplots(figsize=(8 * scale, 4.8 * scale))
     for cond in ("dep", "ind"):
-        for task, marker, alpha in (("acc_task2", "x--", 1.0),
-                                    ("acc_task1", "o-", 0.45)):
+        for task, alpha in (("acc_task2", 1.0),
+                            ("acc_task1", 0.45)):
             acc = _get(data, cond, task)
             se = np.asarray(
                 data["avg"][cond].get(task + "_se", np.zeros(len(soa_ms))),
                 float)
             err = 1.0 - acc
             tlab = "Task 2" if task == "acc_task2" else "Task 1"
-            ax.plot(soa_ms, err, marker, color=COLORS[cond], alpha=alpha,
-                    label=f"{tlab} | {LABELS[cond]}")
-            ax.fill_between(soa_ms, err - se, err + se,
-                            color=COLORS[cond], alpha=0.08)
+            ax.errorbar(soa_ms, err, yerr=se, fmt="o-", color=COLORS[cond],
+                        alpha=alpha, capsize=3,
+                        label=f"{tlab} | {LABELS[cond]}")
 
     ax.set_xlabel("SOA (ms)")
     ax.set_ylabel("Error rate")
