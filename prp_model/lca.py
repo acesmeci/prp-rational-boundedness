@@ -1,5 +1,5 @@
 """
-Leaky Competing Accumulator (LCA) — unified, paper-faithful implementation.
+Leaky Competing Accumulator (LCA) — unified, clock-faithful implementation.
 
 Implements the LCA decision process from Musslick et al. (2023), Eq. 4:
 
@@ -18,42 +18,32 @@ dynamics (_lca_step):
 
 Conventions
 -----------
-- Time is simulated in discrete steps; reported RTs are in LCA-step units
-  (not seconds), plus non-decision time t0.
+- Each simulation step corresponds to dt = 0.05 physical seconds (50 ms).
+- Returned RTs are in seconds: (completed_steps) * dt + t0.
 - `relevant_output_indices` selects the output units belonging to one
   response dimension (e.g. the 3 units for one pathway).
-- One LCA step corresponds to `MS_PER_STEP` milliseconds of real time
-  when converting for display/plotting.
 
 Default parameters (paper, p. 45):
     λ = 0.4,  α = 0.2,  β = 0.2,  σ = 0.2,  t0 = 0.15,
-    dt = 0.1,  τ = 1.0  (effective dt/τ = 0.1),  ITI = 0.5
+    dt = 0.05,  τ = 0.5  (effective dt/τ = 0.1),  ITI = 1.8
 
-Note on dt/τ: The paper specifies both dt and τ as parameters of Eq. 4.
-With the defaults dt = τ = 0.1 we get dt/τ = 1.0, meaning each simulation
-step corresponds to one full time-constant. The MATLAB repository uses
-dt = 0.01, τ = 0.1 (dt/τ = 0.1), yielding the same per-step advance
-but requiring more steps per trial.  Our implementation uses dt = 0.1,
-τ = 1.0 (dt/τ = 0.1) to match the MATLAB's effective accumulation rate
-while keeping the coarser step count, and calibrates the output timescale
-via MS_PER_STEP for display purposes.
+Note on dt/τ: The MATLAB repository uses dt = 0.01, τ = 0.1 (dt/τ = 0.1),
+where each step is 10 ms. Our implementation uses dt = 0.05, τ = 0.5
+(dt/τ = 0.1) so that each step is 50 ms. The per-iteration accumulation
+dynamics are identical (same dt/τ ratio); only the physical duration
+assigned to each step differs. All returned times are in seconds.
 """
 
 import numpy as np
 
 
-# ── Time calibration ─────────────────────────────────────────────────────────
-# Each LCA step corresponds to this many milliseconds when plotting.
-# Used by plotting scripts for the SOA and RT axis conversions.
-MS_PER_STEP = 50
-
-
 # ── Default LCA parameters ───────────────────────────────────────────────────
-# λ, α, β, σ from paper p. 45.  dt = 0.1, τ = 1.0 gives dt/τ = 0.1,
-# matching the MATLAB's effective accumulation rate (dt=0.01, τ=0.1).
+# λ, α, β, σ from paper p. 45.  dt = 0.05, τ = 0.5 gives dt/τ = 0.1,
+# matching the MATLAB's per-iteration accumulation rate (dt=0.01, τ=0.1)
+# while assigning each step a physical duration of 50 ms.
 _DEFAULTS = dict(
-    dt=0.1,
-    tau=1.0,
+    dt=0.05,
+    tau=0.5,
     lambda_=0.4,
     alpha=0.2,
     beta=0.2,
@@ -106,7 +96,8 @@ def run_lca(
     Returns
     -------
     rt : float or None
-        Decision time (LCA steps × dt + t0).  None if threshold not reached.
+        Decision time in seconds: (completed_steps) * dt + t0.
+        None if threshold not reached.
     choice : int or None
         Index (within relevant outputs) of the winning accumulator.
     trajectory : list of np.ndarray
@@ -138,7 +129,7 @@ def run_lca(
         above = np.where(f >= threshold)[0]
         if len(above) > 0:
             choice = int(np.random.choice(above)) if len(above) > 1 else int(above[0])
-            rt = t * dt + t0
+            rt = (t + 1) * dt + t0
             return rt, choice, trajectory
 
     return None, None, trajectory
@@ -299,7 +290,7 @@ def run_lca_dist(
                 above = np.where(f >= z)[0]
                 if len(above) > 0:
                     choice = int(np.random.choice(above))
-                    all_rts[ti, rep] = t * dt + t0
+                    all_rts[ti, rep] = (t + 1) * dt + t0
                     all_accs[ti, rep] = 1.0 if choice == correct_response_idx else 0.0
                     break
 
