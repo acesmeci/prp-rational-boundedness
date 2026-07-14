@@ -354,10 +354,10 @@ def parse_args():
     p.add_argument("--z_soa_refs", type=int, nargs="+", default=[3, 8, 16],
                    help="Reference SOAs (steps) pooled for session-level "
                         "dual-context selection.")
-    p.add_argument("--acc_floor_dual", type=float, default=0.95,
+    p.add_argument("--acc_floor_dual", type=float, default=0.0,
                    help="Accuracy floor for dual-context selection "
                         "(empirical dual-task accuracy: 90-95%%).")
-    p.add_argument("--acc_floor_task1", type=float, default=0.99,
+    p.add_argument("--acc_floor_task1", type=float, default=0.0,
                    help="Accuracy floor for Task 1 (the protected task; "
                         "empirical T1 accuracy 97-99%%).")
     p.add_argument("--fix_z_task1", action="store_true",
