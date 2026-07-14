@@ -24,12 +24,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from prp_model.lca import MS_PER_STEP
+from prp_model.lca import _DEFAULTS
 from prp_model.utils import steps_to_ms, sim_seconds_to_ms
 
 # SOA* boundary factor (decided with Sebastian, 09 Jul 2026; was 0.80).
 # NOTE: Ch.2 table/text were written under 0.80 — revision item.
-SOA_STAR_FACTOR = 0.60
+SOA_STAR_FACTOR = 0.80
 
 COLORS = {"dep": "#1f77b4", "ind": "#2ca02c"}
 LABELS = {"dep": "B\u2192A (dependent)", "ind": "C\u2192A (independent)"}
@@ -242,8 +242,8 @@ def plot_onset_delay(data, out_base, scale=1.15):
         onset = _get(data, cond, "onset2")
         se = np.asarray(
             data["avg"][cond].get("onset2_se", np.zeros(len(soa_ms))), float)
-        delay_ms = (onset - soa_steps) * MS_PER_STEP
-        se_ms = se * MS_PER_STEP
+        delay_ms = (onset - soa_steps) * _DEFAULTS["dt"] * 1000
+        se_ms = se * _DEFAULTS["dt"] * 1000
         ax.plot(soa_ms, delay_ms, "s--", color=COLORS[cond],
                 label=LABELS[cond])
         ax.fill_between(soa_ms, delay_ms - se_ms, delay_ms + se_ms,
