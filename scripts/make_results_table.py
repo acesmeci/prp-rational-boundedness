@@ -7,7 +7,7 @@ import json, glob, argparse
 import numpy as np
 from prp_model.utils import steps_to_ms, sim_seconds_to_ms
 
-SOA_STAR_FACTOR = 0.60
+SOA_STAR_FACTOR = 0.80
 
 def ols(x, y):
     m = np.isfinite(x) & np.isfinite(y)

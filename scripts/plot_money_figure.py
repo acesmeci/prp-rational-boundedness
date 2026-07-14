@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 
 from prp_model.utils import steps_to_ms, sim_seconds_to_ms
 
-SOA_STAR_FACTOR = 0.60  # keep in sync with plot_prp_sweep
+SOA_STAR_FACTOR = 0.80  # keep in sync with plot_prp_sweep
 
 COLORS = {"dep": "#1f77b4", "ind": "#2ca02c"}
 LABELS = {"dep": "B\u2192A (dependent)", "ind": "C\u2192A (independent)"}
