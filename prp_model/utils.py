@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 from prp_model.nn_wrapper import TaskNetworkWrapper
-from prp_model.lca import MS_PER_STEP, _DEFAULTS
+from prp_model.lca import _DEFAULTS
 
 
 # ── Task definitions (paper, Fig. 13) ────────────────────────────────────────
@@ -205,12 +205,12 @@ def steepest_adjacent_slope(
     order = np.argsort(soa)
     soa, y = soa[order], y[order]
 
-    # RT is in dt-seconds (steps × dt + t0), SOA is in steps.
-    # Convert SOA to the same timescale as RT for a clean s/s slope:
+    # RT is in seconds (completed_steps × dt + t0), SOA is in steps.
+    # Convert SOA to seconds for a clean s/s slope:
     dt = _DEFAULTS["dt"]
-    soa_sec = soa * dt               # steps → dt-seconds
-    dy = np.diff(y)                   # Δ RT in dt-seconds
-    dsoa = np.diff(soa_sec)           # Δ SOA in dt-seconds
+    soa_sec = soa * dt               # steps → seconds
+    dy = np.diff(y)                   # Δ RT in seconds
+    dsoa = np.diff(soa_sec)           # Δ SOA in seconds
     slope_s_per_s = dy / dsoa         # dimensionless (s/s)
 
     i = int(np.nanargmin(slope_s_per_s))
@@ -223,16 +223,18 @@ def steepest_adjacent_slope(
 # ── Display-unit conversion ─────────────────────────────────────────────────
 
 def steps_to_ms(steps: np.ndarray) -> np.ndarray:
-    """Convert LCA steps to display milliseconds."""
-    return np.asarray(steps, float) * MS_PER_STEP
+    """Convert simulation steps to milliseconds.
+
+    With the clock-faithful parameterization (dt = 0.05 s per step),
+    each step is exactly dt * 1000 = 50 ms.
+    """
+    return np.asarray(steps, float) * _DEFAULTS["dt"] * 1000
 
 
 def sim_seconds_to_ms(seconds: np.ndarray) -> np.ndarray:
-    """Convert simulation-seconds (steps × dt) to display milliseconds.
+    """Convert seconds to milliseconds.
 
-    Since 1 step = dt sim-seconds = MS_PER_STEP real-ms:
-        ms = sim_seconds × (MS_PER_STEP / dt)
-    With defaults: ms = sim_seconds × 500.
+    With the clock-faithful parameterization, simulation seconds ARE
+    physical seconds, so the conversion is simply × 1000.
     """
-    return np.asarray(seconds, float) * (MS_PER_STEP / _DEFAULTS["dt"])
-
+    return np.asarray(seconds, float) * 1000
