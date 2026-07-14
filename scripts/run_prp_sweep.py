@@ -32,7 +32,7 @@ from prp_model.threshold_utils import (
     compute_fixed_threshold_for_task_meanargmax,
     compute_condition_thresholds,
 )
-from prp_model.lca import MS_PER_STEP, _DEFAULTS
+from prp_model.lca import _DEFAULTS
 from prp_model.utils import (
     make_wrapper,
     generate_trial_pair,
@@ -56,7 +56,7 @@ def make_tag(args):
     af_tag = f"{int(round(args.acc_floor_dual * 100)):02d}"
     return (f"E{args.E}_p{p_tag}_nt{args.trials_per_soa}"
             f"_soa{args.soa_start}-{args.soa_end}-{args.soa_step}"
-            f"_step{MS_PER_STEP:03d}ms_ITI{iti_tag}"
+            f"_step{int(_DEFAULTS['dt']*1000):03d}ms_ITI{iti_tag}"
             f"_s{s_tag}_zc{zc_tag}_af{af_tag}"
             f"_fx{int(args.fix_z_task1)}_oo{int(args.optimize_onset)}"
             f"_od{args.max_onset_delay}")
@@ -233,7 +233,7 @@ def run_ensemble(args):
     print(f"  z_soa_refs: {args.z_soa_refs} | fix_z1={args.fix_z_task1} "
           f"| onset_optim={args.optimize_onset} (window {args.max_onset_delay})")
     print(f"  SOA: {soa_list[0]}-{soa_list[-1]} step {args.soa_step} "
-          f"({soa_list[0]*MS_PER_STEP:.0f}-{soa_list[-1]*MS_PER_STEP:.0f} ms) "
+          f"({soa_list[0]*_DEFAULTS['dt']*1000:.0f}-{soa_list[-1]*_DEFAULTS['dt']*1000:.0f} ms) "
           f"| trials/SOA: {args.trials_per_soa} | workers: {args.workers}")
     print(f"{'='*60}\n")
 
@@ -298,7 +298,7 @@ def run_ensemble(args):
             "fix_z_task1": args.fix_z_task1,
             "optimize_onset": args.optimize_onset,
             "max_onset_delay": args.max_onset_delay,
-            "ms_per_step": MS_PER_STEP,
+            "dt": _DEFAULTS["dt"], "tau": _DEFAULTS["tau"],
         },
         "soa": soa_list,
         "avg": {"dep": dep_avg, "ind": ind_avg},
@@ -374,7 +374,7 @@ def parse_args():
     # Timing / LCA
     p.add_argument("--dt_lca", type=float, default=_DEFAULTS["dt"])
     p.add_argument("--t0", type=float, default=_DEFAULTS["t0"])
-    p.add_argument("--ITI", type=float, default=0.5)
+    p.add_argument("--ITI", type=float, default=1.8)
     p.add_argument("--noise_std", type=float, default=_DEFAULTS["noise_std"])
 
     # Onset policy
