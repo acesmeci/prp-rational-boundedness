@@ -53,7 +53,7 @@ def make_tag(args):
     iti_tag = f"{int(round(args.ITI * 10)):02d}"
     s_tag = f"{int(round(args.noise_std * 100)):03d}"
     zc_tag = "D" if args.z_context == "dual" else "S"
-    af_tag = f"-{int(round(args.acc_floor * 100)):02d}{int(round(args.acc_floor_dual * 100)):02d}"
+    af_tag = f"-{int(round(args.acc_floor_task1 * 100)):02d}{int(round(args.acc_floor_dual * 100)):02d}"
     return (f"E{args.E}_p{p_tag}_nt{args.trials_per_soa}"
             f"_soa{args.soa_start}-{args.soa_end}-{args.soa_step}"
             f"_step{int(_DEFAULTS['dt']*1000):03d}ms_ITI{iti_tag}"
