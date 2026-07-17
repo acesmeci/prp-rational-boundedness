@@ -98,7 +98,7 @@ def soa_star_ms(data, cond="dep"):
     rt1 = _get(data, cond, _rt_key(data, "rt_task1"))
     if rt1 is None or not np.isfinite(rt1).any():
         return np.nan
-    return SOA_STAR_FACTOR * float(np.nanmean(sim_seconds_to_ms(rt1)))
+    return SOA_STAR_FACTOR * float(sim_seconds_to_ms(rt1)[-1])
 
 
 def head_tail_slopes(soa_ms, rt_ms, soa_star):
@@ -167,8 +167,8 @@ def plot_main(data, out_base, scale=1.15, add_pashler=False,
                       if np.isfinite(star) else (np.nan, np.nan))
         ax2.errorbar(soa_ms, mean, yerr=se, fmt="o-", color=COLORS[cond],
                      capsize=3,
-                     label=f"{LABELS[cond]}, slope\u2082 = {ts:.2f}")
-        console.append(f"  {cond}: 2-shortest {ts:.2f} | head {head:.2f} "
+                     label=f"{LABELS[cond]}, head slope {ts:.2f}")
+        console.append(f"  {cond}: head {ts:.2f} | full-head {head:.2f} "
                        f"| tail {tail:.2f}")
         console.append(f"  {cond}: 2-longest {tl:.2f}")
 
