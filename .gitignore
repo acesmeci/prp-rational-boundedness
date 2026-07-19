@@ -31,3 +31,6 @@ instructions.md
 prp_literature_tracker.md
 .gitignored_files_list
 .gituntracked_files_list
+
+# Dev requirements
+requirements-dev.txt
