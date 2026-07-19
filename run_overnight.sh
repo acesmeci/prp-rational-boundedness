@@ -12,7 +12,8 @@
 set -e  # stop on first error
 
 BASE="--store_dir ensemble_ckpt_p09 --E 20 --trials_per_soa 50 \
-      --soa_start 1 --soa_end 20 --soa_step 2 --workers 6 --plot"
+      --soa_start 1 --soa_end 20 --soa_step 2 --workers 6 --plot \
+      --acc_floor_task1 0.98 --acc_floor_dual 0.0"
 
 echo "============================================"
 echo " Overnight run — started $(date)"
@@ -39,9 +40,7 @@ echo ""
 echo ">>> ITI ROBUSTNESS (p=0.65, strategic)"
 for iti in 0.5 4.0; do
   echo "--- ITI=$iti  $(date) ---"
-  python -m scripts.run_prp_sweep --store_dir ensemble_ckpt_p09 --E 20 \
-    --trials_per_soa 50 --soa_start 1 --soa_end 20 --soa_step 2 \
-    --ITI $iti --workers 6 --plot --persistence 0.65 --optimize_onset
+  python -m scripts.run_prp_sweep $BASE --persistence 0.65 --optimize_onset --ITI $iti
 done
 
 echo ""
