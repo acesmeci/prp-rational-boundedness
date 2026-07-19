@@ -12,9 +12,9 @@ Outputs per JSON (PNG + PDF):
     onset  -> output/plots/ensemble/onset/<tag>_onset.{png,pdf}
 
 Slope reporting follows the thesis Ch.2 evaluation criteria:
-    SOA* = SOA_STAR_FACTOR x RT1 (RT1 = mean correct-trials Task-1 RT).
-    Head slope (OLS over SOA <= SOA*) is annotated in the legend; tail and
-    two-shortest-SOA slopes are printed to console for reporting in text.
+    Head slope = two shortest SOAs (Ch.2 primary criterion).
+    Full-head = OLS over SOA <= SOA*.
+    SOA* = SOA_STAR_FACTOR x RT1 at longest SOA.
 """
 import os, json, argparse, glob
 from pathlib import Path
@@ -27,27 +27,30 @@ import matplotlib.pyplot as plt
 from prp_model.lca import _DEFAULTS
 from prp_model.utils import steps_to_ms, sim_seconds_to_ms
 
-# SOA* boundary factor (decided with Sebastian, 09 Jul 2026; was 0.80).
-# NOTE: Ch.2 table/text were written under 0.80 — revision item.
 SOA_STAR_FACTOR = 0.80
 
 COLORS = {"dep": "#1f77b4", "ind": "#2ca02c"}
 LABELS = {"dep": "B\u2192A (dependent)", "ind": "C\u2192A (independent)"}
 
 CONTEXTS = {  # name -> (base font size, figure scale)
-    "paper": (11, 1.0),
+    "paper": (16, 1.0),   # larger fonts: figures are scaled ~50% in thesis
     "talk": (14, 1.15),
     "poster": (18, 1.35),
 }
 
+_SHOW_TITLES = True  # set False for paper context (titles go in captions)
+
 
 def set_context(name):
+    global _SHOW_TITLES
     base, scale = CONTEXTS[name]
+    _SHOW_TITLES = (name != "paper")
+    legend_size = base - 4 if name == "paper" else base - 1
     plt.rcParams.update({
         "font.size": base,
         "axes.labelsize": base + 2,
         "axes.titlesize": base + 2,
-        "legend.fontsize": base - 1,
+        "legend.fontsize": legend_size,
         "xtick.labelsize": base,
         "ytick.labelsize": base,
         "lines.linewidth": 1.6 * scale,
@@ -94,7 +97,7 @@ def two_longest_slope(soa_ms, rt_ms):
     return float((r[1] - r[0]) / (s[1] - s[0]))
 
 def soa_star_ms(data, cond="dep"):
-    """SOA* = SOA_STAR_FACTOR x mean correct-trials RT1, in ms."""
+    """SOA* = SOA_STAR_FACTOR x RT1 at longest SOA, in ms."""
     rt1 = _get(data, cond, _rt_key(data, "rt_task1"))
     if rt1 is None or not np.isfinite(rt1).any():
         return np.nan
@@ -145,7 +148,7 @@ def plot_main(data, out_base, scale=1.15, add_pashler=False,
                      capsize=3, label=LABELS[cond])
     ax1.set_xlabel("SOA (ms)")
     ax1.set_ylabel("RT1 (ms)")
-    ax1.set_title(f"Task 1 RT  (p = {p:.2f})")
+    if _SHOW_TITLES: ax1.set_title(f"Task 1 RT  (p = {p:.2f})")
     ax1.legend(loc="upper right", frameon=False)
     ax1.grid(True, linestyle=":", alpha=0.4)
     if rt1_ylim:
@@ -184,7 +187,7 @@ def plot_main(data, out_base, scale=1.15, add_pashler=False,
 
     ax2.set_xlabel("SOA (ms)")
     ax2.set_ylabel("RT2 (ms)")
-    ax2.set_title(f"Task 2 RT  (p = {p:.2f})")
+    if _SHOW_TITLES: ax2.set_title(f"Task 2 RT  (p = {p:.2f})")
     ax2.legend(loc="upper right", frameon=False)
     ax2.grid(True, linestyle=":", alpha=0.4)
     if rt2_ylim:
@@ -217,7 +220,7 @@ def plot_error_rates(data, out_base, scale=1.15):
 
     ax.set_xlabel("SOA (ms)")
     ax.set_ylabel("Error rate")
-    ax.set_title(f"Error rates  (p = {p:.2f})")
+    if _SHOW_TITLES: ax.set_title(f"Error rates  (p = {p:.2f})")
     ax.set_ylim(bottom=-0.005)
     ax.legend(ncol=2, frameon=False)
     ax.grid(True, linestyle=":", alpha=0.4)
@@ -241,15 +244,13 @@ def plot_onset_delay(data, out_base, scale=1.15):
             data["avg"][cond].get("onset2_se", np.zeros(len(soa_ms))), float)
         delay_ms = (onset - soa_steps) * _DEFAULTS["dt"] * 1000
         se_ms = se * _DEFAULTS["dt"] * 1000
-        ax.plot(soa_ms, delay_ms, "s--", color=COLORS[cond],
-                label=LABELS[cond])
-        ax.fill_between(soa_ms, delay_ms - se_ms, delay_ms + se_ms,
-                        color=COLORS[cond], alpha=0.15)
+        ax.errorbar(soa_ms, delay_ms, yerr=se_ms, fmt="o-",
+                    color=COLORS[cond], capsize=3, label=LABELS[cond])
 
     ax.axhline(0, color="gray", linewidth=0.8)
     ax.set_xlabel("SOA (ms)")
     ax.set_ylabel("Strategic onset delay (ms)")
-    ax.set_title(f"Task 2 engagement delay  (p = {p:.2f})")
+    if _SHOW_TITLES: ax.set_title(f"Task 2 engagement delay  (p = {p:.2f})")
     ax.legend(frameon=False)
     ax.grid(True, linestyle=":", alpha=0.4)
     _save(fig, out_base)
