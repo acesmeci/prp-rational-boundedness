@@ -1,95 +1,130 @@
-# A Connectionist Model of the Psychological Refractory Period and Cognitive Control
+# PRP-Rational-Boundedness
 
-Repository for the Master's thesis *"A Connectionist Model of the Psychological
-Refractory Period and Cognitive Control"* (A. Cesmeci, Osnabrück University,
-2026; supervisor: S. Musslick). The project replicates and extends the PRP
-simulation (Simulation Study 3) from:
+Connectionist model of the Psychological Refractory Period (PRP) effect,
+based on the Rational Boundedness Account (Musslick et al., 2020; Musslick
+& Cohen, 2021). A feedforward neural network learns shared task
+representations, and dual-task interference emerges from representational
+overlap — without any structural bottleneck.
 
-> Musslick, S., Saxe, A., Hoskin, A., Sagiv, Y., Reichman, D., Petri,
-> G., & Cohen, J. (2020). On the rational boundedness of cognitive 
-> control: Shared versus separated representations.
+Developed for the Master's thesis of Ahmet Cesmeci (Osnabrück University,
+2026; supervisor: Prof. Dr. Sebastian Musslick).
 
-A feedforward task network (shared vs. separated task representations, task
-cues as control signals, temporal persistence of task-set activity) is read
-out by a Leaky Competing Accumulator (LCA). Dual-task (PRP) trials contrast a
-functionally **dependent** pairing (B→A, shared representations) with an
-**independent** pairing (C→A, separated representations) across SOAs, under
-two strategic regimes: **greedy** Task-2 engagement (cue on at stimulus onset)
-and **strategic** engagement (reward-rate-optimal onset; Eq. 7 of the
-preprint).
+## Setup
 
-## Headline result
+```bash
+git clone https://github.com/acesmeci/prp-rational-boundedness.git
+cd prp-rational-boundedness
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-Task-2 head slopes are lawfully task-dependent (dependent ≈ −0.5 to −0.9,
-independent ≈ −0.4 to −0.5 under the strategic regime) and vary with
-persistence and strategy, jointly spanning the empirical head-slope range
-documented in the thesis' literature evaluation (−0.27 to −1.60) — while only
-the strategic regime reproduces the empirically observed flat Task-2 error
-profile. See `output/plots/ensemble/thesis/` and
-`model_results_table_100726.md`.
+Requires Python 3.10+ and a working PyTorch installation (CPU is fine;
+training 20 networks takes ~5 minutes on a modern laptop).
+
+## Usage
+
+The pipeline has one entry point. Training, threshold
+optimization, PRP simulation, and plotting, everything runs through a single script:
+
+```bash
+# Train 20 networks, compute thresholds, run PRP sweeps, generate figures
+python -m scripts.run_prp_sweep \
+    --store_dir ensemble_ckpt \
+    --E 20 \
+    --persistence 0.65 \
+    --optimize_onset \
+    --workers 6 \
+    --plot
+```
+
+Networks are trained once and cached in `--store_dir`; subsequent runs
+reuse the trained weights automatically.
+
+### Key options
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--persistence` | — | Temporal persistence parameter (0.0–1.0) |
+| `--optimize_onset` | off | Enable strategic Task 2 deferment (omit for greedy) |
+| `--E` | 20 | Number of networks in the ensemble |
+| `--ITI` | 1.8 | Inter-trial interval in seconds |
+| `--soa_start/end/step` | 1/20/2 | SOA range in simulation steps (1 step = 50 ms) |
+| `--acc_floor_task1` | 0.0 | Task 1 accuracy floor for threshold selection |
+| `--workers` | 0 | Parallel workers (0 = serial) |
+| `--plot` | off | Generate figures after sweep |
+
+### Generating figures from saved results
+
+```bash
+# RT and error figures for all completed runs
+python -m scripts.plot_prp_sweep \
+    --json "output/results/E20_*.json" --context paper
+
+# Head slope vs persistence (money figure)
+python -m scripts.plot_money_figure \
+    --json "output/results/E20_*_ITI18_*.json" --context paper
+
+# Summary table (markdown + LaTeX)
+python -m scripts.make_results_table --json "output/results/E20_*.json"
+```
+
+### Running all thesis configurations
+
+```bash
+bash run_simulations.sh
+```
 
 ## Repository structure
 
 ```
-prp_model/            Core package
-  task_network.py       Feedforward task network (paper Fig. 13 architecture)
-  nn_wrapper.py         Training / integration wrapper (persistence EMA)
-  training_set.py       MATLAB-style single-task training patterns
-  lca.py                LCA dynamics (Eq. 4): run_lca / run_lca_avg / run_lca_dist
-  threshold_utils.py    Session-level threshold selection (dual-task SOA-mixture,
-                        accuracy-constrained expected reward rate) + onset policy
-  prp_simulator.py      Two-pass PRP trial and SOA sweep
-  utils.py              Trial generation, checkpoint I/O, aggregation, units
-scripts/
-  run_prp_sweep.py      Ensemble PRP sweep CLI (training, thresholds, sweeps)
-  plot_prp_sweep.py     Thesis figures: RT1+RT2 panels, error rates, onset delay
-  plot_money_figure.py  Head slope × persistence × condition × strategy
-  make_results_table.py Summary table (markdown + LaTeX) across runs
-run_finals.sh           Provenance: exact thesis simulation runs (M/S/R)
-run_extras.sh           Provenance: extended persistence range runs
-prp_old/                Archived pre-refactor code (do not use)
-output/                 Results JSONs, plots, tables (gitignored except tables)
+prp_model/              Core library
+  task_network.py         Three-layer feedforward network (PyTorch)
+  nn_wrapper.py           Training wrapper + temporal integration (persistence)
+  training_set.py         Single-task training patterns
+  lca.py                  Leaky Competing Accumulator (decision process)
+  threshold_utils.py      Reward-rate threshold optimization + onset policy
+  prp_simulator.py        Dual-task PRP trial simulation
+  utils.py                Trial generation, I/O, time-unit conversions
+
+scripts/                Pipeline entry points
+  run_prp_sweep.py        Full ensemble pipeline (train → threshold → sweep)
+  plot_prp_sweep.py       RT, error, and onset-delay figures
+  plot_money_figure.py    Head slope × persistence × condition figure
+  make_results_table.py   Summary table across runs
+
+ensemble_ckpt_p09/      Trained network weights (not tracked; regeneratable)
+output/                 Results and figures (not tracked; regeneratable)
 ```
 
-## Quick start
+## How it works
 
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+1. **Training:** 20 networks learn five tasks (A–E) over shared pathways.
+   Tasks B and A become functionally dependent through intermediary tasks
+   D and E; Tasks C and A remain independent.
 
-# Full pipeline for one configuration (trains 20 networks if checkpoints
-# are missing, computes session-level thresholds, runs both conditions):
-python -m scripts.run_prp_sweep --store_dir ensemble_ckpt_p09 --E 20 \
-    --train_if_missing --persistence 0.65 --trials_per_soa 50 \
-    --soa_start 1 --soa_end 20 --soa_step 2 --ITI 1.8 \
-    --optimize_onset --workers 6 --plot
+2. **Threshold optimization:** For each condition (B→A, C→A), LCA decision
+   thresholds are selected to maximize expected reward rate in dual-task
+   context, pooled over representative SOAs.
 
-# All thesis runs (main / greedy / robustness):
-bash run_finals.sh && bash run_extras.sh
+3. **PRP simulation:** Dual-task trials across SOAs (50–950 ms). Task 1's
+   residual activity (governed by persistence) interferes with Task 2
+   processing at short SOAs, producing the PRP curve.
 
-# Figures and summary table from saved JSONs:
-python -m scripts.plot_prp_sweep --json "output/results/E20_*_ITI18_*zcD*.json" --context talk
-python -m scripts.plot_money_figure --json "output/results/E20_p0[5-8]*_ITI18_*zcD*.json" \
-    --empirical_band -1.60 -0.27
-python -m scripts.make_results_table --json "output/results/E20_*_ITI18_*zcD*.json"
-```
+4. **Strategic vs. greedy:** Under the strategic regime, Task 2 engagement
+   is deferred to maximize joint reward rate. Under greedy engagement,
+   Task 2 starts immediately at stimulus onset.
 
-## Key configuration (thesis-final; full rationale in simulation_spec_090726.md)
+## References
 
-| Parameter | Value |
-|---|---|
-| LCA (Eq. 4) | dt/τ = 0.1, λ = 0.4, α = 0.2, β = 0.2, σ = 0.2, t0 = 0.15 |
-| Time calibration | 1 step = 50 ms |
-| ITI | 1.8 s (Pashler & Johnston, 1989); robust across 0.5–4.0 s |
-| Thresholds | per task role, session-level, dual-task SOA-mixture context; accuracy floors 0.99 (T1) / 0.95 (T2); z2 shared across conditions |
-| Onset policy | Eq. 7 reward-rate-optimal onset (main); greedy engagement (secondary) |
-| Ensemble | 20 networks; deterministic seeding of training, thresholds, stimuli (yoked across conditions), and LCA noise |
+- Musslick, S., Saxe, A., Hoskin, A., Sagiv, Y., Reichman, D., Petri, G.,
+  & Cohen, J. D. (2020). On the rational boundedness of cognitive control:
+  Shared versus separated representations. *Manuscript submitted for
+  publication.*
+- Musslick, S., & Cohen, J. D. (2021). Rationalizing constraints on the
+  capacity for cognitive control. *Trends in Cognitive Sciences, 25*(9),
+  757–775.
 
-## Reproducibility
+## Documentation
 
-All reported simulations regenerate from the committed shell scripts and
-seeds; result filenames encode the full configuration
-(`E{n}_p{persistence}_..._ITI{iti}_s{noise}_zc{context}_af{floor}_fx{z1}_oo{onset}_od{window}`).
-Trained checkpoints are not tracked; they regenerate deterministically via
-`--train_if_missing` (seed = network index). Development history and the
-rationale for every modeling decision are documented in `troubleshoot.md`.
+See `CODEBASE_SUMMARY.md` for detailed module documentation, parameter
+conventions, and development history.
