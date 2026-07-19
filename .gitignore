@@ -11,9 +11,6 @@ prp_old/
 prp_model/sim-study-2/
 scripts_legacy/
 
-# Codebase summary
-CODEBASE_SUMMARY.md
-
 # Logs
 *.log
 
