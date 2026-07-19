@@ -3,25 +3,6 @@ __pycache__/
 *.pt
 .venv/
 
-# Ignore all outputs and plots
-output/
-*.png
-
-# Ignore virtual environments
-.venv/
-__pycache__/
-
-# Ignore logging notes
-todo.md
-troubleshooting.md
-
-# Ignore VS Code Git bookkeeping files
-.gitignored_files_list
-.gituntracked_files_list
-
-# Ensemble trained networks
-ensemble_ckpt_p09/
-
 # Ignore Jupyter notebooks
 notebooks/
 
@@ -29,17 +10,23 @@ notebooks/
 prp_old/
 prp_model/sim-study-2/
 
-# Documentation files
-instructions.md
-prp_literature_tracker.md
-
-# legacy threshold z jsons
-legacy/
-
-# Ensemble run logs
-extras.log
-finals.log
-
 # Codebase summary
 CODEBASE_SUMMARY.md
 
+# Logs
+*.log
+
+# Checkpoints and outputs (large, regeneratable)
+ensemble_ckpt/
+ensemble_ckpt_p09/
+output/
+thesis_figures/
+legacy/
+
+# Personal notes
+troubleshooting.md
+todo.md
+instructions.md
+prp_literature_tracker.md
+.gitignored_files_list
+.gituntracked_files_list
