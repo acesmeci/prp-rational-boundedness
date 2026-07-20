@@ -221,7 +221,7 @@ def plot_error_rates(data, out_base, scale=1.15):
     ax.set_xlabel("SOA (ms)")
     ax.set_ylabel("Error rate")
     if _SHOW_TITLES: ax.set_title(f"Error rates  (p = {p:.2f})")
-    ax.set_ylim(bottom=-0.005)
+    ax.set_ylim(-0.005, 0.10)
     ax.legend(ncol=2, frameon=False)
     ax.grid(True, linestyle=":", alpha=0.4)
     _save(fig, out_base)
