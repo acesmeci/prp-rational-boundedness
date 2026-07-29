@@ -2,7 +2,8 @@
 corrected values, and inclusion flags. Run once; figure scripts read it."""
 import json, os
 
-OUT = os.path.join(os.path.dirname(__file__), '..', 'output', 'all76.json')
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+OUT = os.path.join(PROJECT_ROOT, 'output', 'all76.json')
 
 D = []
 def add(study, exp, cond, soas, rt2, rt1, src, flags=()):
@@ -116,12 +117,45 @@ add("Rau & Zheng (2020)","1","Tact-Aud",S,[1270,1230,1070,970,790],850,"T")
 add("Rau & Zheng (2020)","1","Vis-Aud",S,[1070,980,900,810,760],730,"T")
 add("Rau & Zheng (2020)","1","Vis-Tact",S,[1120,1040,860,760,670],820,"T")
 
+# ── Head-slope evaluation, including documented exceptions ──
+EXCLUDED_FLAGS = {'grouped', 'unknown_order', 'simple_rt',
+                  'practice_phase', 'suborder'}
+
+
+def head_eval_slope(d):
+    """Head slope used for evaluation, and the index pair it spans.
+
+    Default: the two shortest SOAs. Two documented exceptions:
+      - Van Selst et al. (1999) Session 1: adjacent slopes are erratic at
+        n = 6, so the head is evaluated over 17-250 ms.
+      - Lien et al. (2005): the 0-50 ms segment is near flat, so we take
+        the steepest adjacent pair lying wholly within the head, giving
+        the theories their best chance.
+    """
+    soas, rt2, ss = d['soas'], d['rt2'], d['soa_star']
+
+    if d['study'].startswith('Van Selst') and d['cond'] == 'Session 1':
+        return (rt2[3] - rt2[0]) / (soas[3] - soas[0]), (0, 3)
+
+    if d['study'].startswith('Lien'):
+        cands = [((rt2[i + 1] - rt2[i]) / (soas[i + 1] - soas[i]), i, i + 1)
+                 for i in range(len(soas) - 1)
+                 if ss is None or soas[i + 1] <= ss]
+        if cands:
+            slope, a, b = min(cands, key=lambda t: t[0])
+            return slope, (a, b)
+
+    return (rt2[1] - rt2[0]) / (soas[1] - soas[0]), (0, 1)
+
+
 # ── Compute derived fields ──
 for d in D:
     soas, rt2 = d['soas'], d['rt2']
-    d['head'] = (rt2[1] - rt2[0]) / (soas[1] - soas[0])
     d['soa_star'] = 0.80 * d['rt1'] if d['rt1'] else None
-    d['adj_slopes'] = [round((rt2[i+1] - rt2[i]) / (soas[i+1] - soas[i]), 2)
+    d['head_raw'] = (rt2[1] - rt2[0]) / (soas[1] - soas[0])
+    d['head'], _idx = head_eval_slope(d)
+    d['head_idx'] = list(_idx)
+    d['adj_slopes'] = [round((rt2[i + 1] - rt2[i]) / (soas[i + 1] - soas[i]), 2)
                        for i in range(len(soas) - 1)]
     ss = d['soa_star']
     if ss and len(soas) >= 2 and soas[-2] >= ss:
@@ -131,9 +165,10 @@ for d in D:
         d['tail'] = ((rt2[-1] - rt2[-2]) / (soas[-1] - soas[-2])
                      if len(soas) >= 2 else None)
         d['tail_clean'] = False
-    # Van Selst Session 1 tail demotion: 450ms < SOA*=480ms
+    # Van Selst Session 1 tail demotion: 450 ms < SOA* = 480 ms
     if d['study'].startswith('Van Selst') and d['cond'] == 'Session 1':
         d['tail_clean'] = False
+    d['primary'] = not (set(d['flags']) & EXCLUDED_FLAGS)
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 json.dump(D, open(OUT, 'w'), indent=1)
