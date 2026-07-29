@@ -6,6 +6,8 @@ a 3 x 4 grid.
 Visual encoding
 ---------------
 - Light blue: full extracted RT2-SOA curves.
+- Gray: full extracted RT2-SOA curves.
+- Dashed burgundy: slope = -1 reference segment for each evaluated head segment.
 - Dark blue: empirical head segment used to evaluate the slope = -1 prediction,
   including the documented Van Selst and Lien exceptions.
 - Orange: clean empirical tail segment used to evaluate the slope = 0 prediction.
@@ -33,22 +35,16 @@ PROJECT_ROOT = os.path.abspath(
 DATA = os.path.join(PROJECT_ROOT, "output", "all76.json")
 OUTDIR = os.path.join(PROJECT_ROOT, "output", "plots", "ensemble")
 
-FULL_CURVE = "#8fb3cf"
+FULL_CURVE = "#b5b5b5"
 HEAD = "#2b5f8a"
 TAIL = "#c46b2b"
+REF = "#9b2226"
 BOUNDARY = "0.90"
 
 
 def primary(d):
     """Return True for conditions included in the primary 54-curve set."""
-    excluded = {
-        "grouped",
-        "unknown_order",
-        "simple_rt",
-        "practice_phase",
-        "suborder",
-    }
-    return not (set(d["flags"]) & excluded)
+    return d["primary"]
 
 
 PANELS = [
@@ -98,41 +94,14 @@ PANELS = [
 
 
 def head_segment_indices(condition):
-    """Return the inclusive index range used for the empirical head evaluation.
+    """Index range used for the head evaluation.
 
-    Default: the two shortest SOAs.
-
-    Exceptions documented in Chapter 2:
-    - Van Selst et al. (1999), Session 1: evaluate 17--250 ms.
-    - Lien et al. (2005): use the steepest available adjacent slope that
-      remains within the estimated head, giving the theories their best chance.
+    Computed in generate_extraction_data.py, including the documented
+    Van Selst and Lien exceptions, so the figure and the tables cannot
+    diverge.
     """
-    soas = np.asarray(condition["soas"], dtype=float)
-    rt2 = np.asarray(condition["rt2"], dtype=float)
-
-    if (
-        condition["study"].startswith("Van Selst")
-        and condition["cond"] == "Session 1"
-    ):
-        # 17, 67, 150, and 250 ms: highlight the complete evaluated range.
-        return 0, 3
-
-    if condition["study"].startswith("Lien"):
-        soa_star = condition.get("soa_star")
-        candidate_pairs = []
-        for i in range(len(soas) - 1):
-            # Require both points to lie within the estimated head.
-            if soa_star is not None and soas[i + 1] > float(soa_star):
-                continue
-            slope = (rt2[i + 1] - rt2[i]) / (soas[i + 1] - soas[i])
-            candidate_pairs.append((slope, i, i + 1))
-
-        if candidate_pairs:
-            # Most negative adjacent slope = steepest available head segment.
-            _, start_idx, end_idx = min(candidate_pairs, key=lambda item: item[0])
-            return start_idx, end_idx
-
-    return 0, min(1, len(soas) - 1)
+    start, end = condition["head_idx"]
+    return start, end
 
 
 
@@ -196,8 +165,9 @@ def main():
         title_fs = 7
         label_fs = 7.5
         marker_size = 2.0
-        curve_lw = 0.65
-        emphasis_lw = 1.15
+        curve_lw = 0.75
+        emphasis_lw = 1.20
+        ref_lw = 1.05
     else:
         mpl.rcParams.update(
             {
@@ -212,8 +182,9 @@ def main():
         title_fs = 10
         label_fs = 11
         marker_size = 3.3
-        curve_lw = 1.0
-        emphasis_lw = 1.8
+        curve_lw = 1.05
+        emphasis_lw = 1.95
+        ref_lw = 1.40
 
     fig, axes = plt.subplots(3, 4, figsize=figsize)
 
@@ -243,7 +214,7 @@ def main():
                 ms=marker_size,
                 mfc=FULL_CURVE,
                 mec="none",
-                alpha=0.72,
+                alpha=0.82,
                 zorder=1,
             )
 
@@ -251,6 +222,25 @@ def main():
             # exceptions for Van Selst et al. (1999) and Lien et al. (2005).
             if len(soas) >= 2:
                 head_start, head_end = head_segment_indices(d)
+
+                # Condition-specific slope = -1 reference over exactly the same
+                # SOA extent as the evaluated head segment. The line starts at
+                # the first empirical point and shows where RT2 would end if the
+                # segment followed the theoretical -1 prediction.
+                x0 = soas[head_start]
+                x1 = soas[head_end]
+                y0 = rt2[head_start]
+                y1_ref = y0 - (x1 - x0)
+                ax.plot(
+                    [x0, x1],
+                    [y0, y1_ref],
+                    color=REF,
+                    lw=ref_lw,
+                    ls=(0, (3.6, 2.0)),
+                    alpha=0.90,
+                    zorder=1.6,
+                )
+
                 ax.plot(
                     soas[head_start : head_end + 1],
                     rt2[head_start : head_end + 1],
@@ -308,6 +298,15 @@ def main():
         Line2D(
             [0],
             [0],
+            color=REF,
+            lw=ref_lw,
+            ls=(0, (3.6, 2.0)),
+            alpha=0.95,
+            label=r"Slope $= -1$ reference",
+        ),
+        Line2D(
+            [0],
+            [0],
             color=HEAD,
             lw=emphasis_lw,
             marker="o",
@@ -337,16 +336,16 @@ def main():
     fig.legend(
         handles=legend_elements,
         loc="lower center",
-        ncol=2,
+        ncol=3,
         fontsize=label_fs,
         frameon=False,
-        bbox_to_anchor=(0.5, -0.02),
-        columnspacing=1.6,
+        bbox_to_anchor=(0.5, -0.028),
+        columnspacing=1.4,
         handletextpad=0.5,
     )
 
     fig.tight_layout(h_pad=1.0, w_pad=0.65)
-    fig.subplots_adjust(bottom=0.15)
+    fig.subplots_adjust(bottom=0.18)
 
     os.makedirs(OUTDIR, exist_ok=True)
     for ext in ("png", "pdf"):
