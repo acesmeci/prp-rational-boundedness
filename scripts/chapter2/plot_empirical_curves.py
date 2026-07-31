@@ -271,7 +271,7 @@ def main():
                 )
 
         ax.set_title(
-            f"{title}  (n={len(conditions)})",
+            f"{title}",
             fontsize=title_fs,
             pad=3,
         )
