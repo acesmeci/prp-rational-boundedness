@@ -164,6 +164,36 @@ def run_switch_trial(
     }
 
 
+def _integrate_switch_trial(
+    wrapper,
+    stim_prev: np.ndarray,
+    stim_curr: np.ndarray,
+    cue_prev: np.ndarray,
+    cue_curr: np.ndarray,
+    persistence: float,
+    n_phase2_steps: int,
+) -> np.ndarray:
+    """Run integration and return phase-2 output series (n_phase2_steps, D_out)."""
+    I = stim_prev.shape[0]
+    T_dim = cue_prev.shape[0]
+    total_steps = 1 + n_phase2_steps
+
+    stim_seq = np.zeros((total_steps, I), dtype=np.float32)
+    cue_seq = np.zeros((total_steps, T_dim), dtype=np.float32)
+    stim_seq[0] = stim_prev
+    cue_seq[0] = cue_prev
+    stim_seq[1:] = stim_curr[None, :]
+    cue_seq[1:] = cue_curr[None, :]
+
+    outputs = wrapper.integrate(
+        torch.from_numpy(stim_seq),
+        torch.from_numpy(cue_seq),
+        persistence=persistence,
+    )
+    out_np = np.stack([o.numpy() for o in outputs], axis=0)
+    return out_np[1:]  # phase 2 only
+
+
 def sweep_conditions(
     wrapper,
     persistence: float = 0.85,
@@ -180,9 +210,15 @@ def sweep_conditions(
     verbose: bool = True,
     blank_prev_stimulus: bool = True,
     conditions: list[tuple[str, str, str]] | None = None,
+    threshold_mode: str = "per_condition",
 ) -> dict:
     """
     Run task-switching simulation across conditions and congruency.
+
+    Two-pass procedure (matching MATLAB's optimizeAcrossPatterns):
+      Pass 1: For each (condition × congruency) cell, integrate all stimuli
+              and optimize ONE threshold z across all of them jointly.
+      Pass 2: Measure RT and accuracy per trial using that fixed z.
 
     Default conditions match Musslick et al. (2020) Simulation Study 3:
       E→A (structural dependence), B→A (functional dependence),
@@ -195,16 +231,22 @@ def sweep_conditions(
     persistence : float
         Python-convention persistence (p=0.85 = MATLAB tau=0.15).
     n_stim : int
-        Number of stimulus samples per cell.
+        Number of stimulus samples per condition (split across congruent
+        and incongruent by the stimulus sampling).
     conditions : list of (prev_task, curr_task, label) or None
         If None, uses the default four conditions.
+    threshold_mode : str
+        "per_condition" (default): one z per condition×congruency cell,
+            optimized across all stimuli in that cell. Matches MATLAB.
+        "per_trial": optimize z independently per trial (original v1
+            behaviour, produces inverted switch costs).
 
     Returns
     -------
     dict mapping condition labels to sub-dicts, each containing:
         congruent / incongruent, each with:
             rt_mean, rt_se, rt_correct_mean, rt_correct_se,
-            acc_mean, acc_se, n_decided, n_total
+            acc_mean, acc_se, z, n_decided, n_total
     """
     if conditions is None:
         conditions = [
@@ -217,7 +259,8 @@ def sweep_conditions(
     results = {}
 
     for prev_task, curr_task, label in conditions:
-        cond_results = {"congruent": [], "incongruent": []}
+        # --- Generate all trials and integrate ---
+        trial_data = {"congruent": [], "incongruent": []}
 
         for i in range(n_stim):
             trial = generate_switch_trial(
@@ -225,52 +268,102 @@ def sweep_conditions(
                 seed=seed + i,
                 blank_prev_stimulus=blank_prev_stimulus,
             )
-
-            res = run_switch_trial(
+            phase2_out = _integrate_switch_trial(
                 wrapper,
-                stim_prev=trial["stim_prev"],
-                stim_curr=trial["stim_curr"],
-                cue_prev=trial["cue_prev"],
-                cue_curr=trial["cue_curr"],
-                correct_idx=trial["correct_idx"],
-                resp_indices=trial["resp_indices"],
+                trial["stim_prev"], trial["stim_curr"],
+                trial["cue_prev"], trial["cue_curr"],
                 persistence=persistence,
                 n_phase2_steps=n_phase2_steps,
-                n_repeats=n_repeats,
-                thresholds=thresholds,
-                ITI=ITI, dt=dt, tau=tau, t0=t0,
-                noise_std=noise_std,
             )
-
             key = "congruent" if trial["congruent"] else "incongruent"
-            cond_results[key].append(res)
+            trial_data[key].append({
+                "phase2_out": phase2_out,
+                "correct_idx": trial["correct_idx"],
+                "resp_indices": trial["resp_indices"],
+            })
 
-        # Aggregate
+        # --- Pass 1: optimize one z per condition×congruency cell ---
         agg = {}
         for cong_key in ("congruent", "incongruent"):
-            trials = cond_results[cong_key]
+            trials = trial_data[cong_key]
             if not trials:
                 agg[cong_key] = {
                     "rt_mean": np.nan, "rt_se": np.nan,
                     "rt_correct_mean": np.nan, "rt_correct_se": np.nan,
                     "acc_mean": np.nan, "acc_se": np.nan,
-                    "n_decided": 0, "n_total": 0,
+                    "z": np.nan, "n_decided": 0, "n_total": 0,
                 }
                 continue
 
-            rts = [t["rt"] for t in trials if t["rt"] is not None]
-            rts_c = [t["rt_correct"] for t in trials if t["rt_correct"] is not None]
-            accs = [t["acc"] for t in trials if t["acc"] is not None]
+            resp_indices = trials[0]["resp_indices"]  # same for all (curr task is always A)
+
+            if threshold_mode == "per_condition":
+                # Pool RR and accuracy curves across all stimuli in this cell
+                rr_curves, acc_curves = [], []
+                for tr in trials:
+                    _, res = optimize_lca_threshold_dist(
+                        tr["phase2_out"], resp_indices,
+                        correct_response_idx=tr["correct_idx"],
+                        thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
+                        dt=dt, tau=tau, noise_std=noise_std,
+                    )
+                    rr_curves.append(res["reward_rates"])
+                    acc_curves.append(res["accuracies"])
+
+                mean_rr = np.stack(rr_curves).mean(axis=0)
+                z_cell = float(thresholds[int(np.argmax(mean_rr))])
+
+                if verbose:
+                    mean_acc = np.stack(acc_curves).mean(axis=0)
+                    best_idx = int(np.argmax(mean_rr))
+                    print(f"  {label:12s} {cong_key:12s} | "
+                          f"z = {z_cell:.2f} (RR={mean_rr[best_idx]:.3f}, "
+                          f"Acc={mean_acc[best_idx]:.3f}) "
+                          f"[{len(trials)} stimuli]")
+
+            # --- Pass 2: measure RT with fixed z ---
+            rt_list, rt_c_list, acc_list = [], [], []
+            for tr in trials:
+                if threshold_mode == "per_trial":
+                    z_use, _ = optimize_lca_threshold_dist(
+                        tr["phase2_out"], resp_indices,
+                        correct_response_idx=tr["correct_idx"],
+                        thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
+                        dt=dt, tau=tau, noise_std=noise_std,
+                    )
+                else:
+                    z_use = z_cell
+
+                res = run_lca_avg(
+                    tr["phase2_out"], resp_indices,
+                    threshold=z_use, n_repeats=n_repeats,
+                    dt=dt, tau=tau, noise_std=noise_std,
+                    correct_response_idx=tr["correct_idx"],
+                )
+                if res["rt"] is not None:
+                    rt_list.append(res["rt"])
+                if res["rt_correct"] is not None:
+                    rt_c_list.append(res["rt_correct"])
+                if res["p_correct"] is not None:
+                    acc_list.append(res["p_correct"])
+
+            def _mean_se(vals):
+                if not vals:
+                    return np.nan, np.nan
+                m = float(np.mean(vals))
+                se = float(np.std(vals, ddof=1) / np.sqrt(len(vals))) if len(vals) > 1 else np.nan
+                return m, se
+
+            rt_m, rt_se = _mean_se(rt_list)
+            rtc_m, rtc_se = _mean_se(rt_c_list)
+            acc_m, acc_se = _mean_se(acc_list)
 
             agg[cong_key] = {
-                "rt_mean": float(np.mean(rts)) if rts else np.nan,
-                "rt_se": float(np.std(rts, ddof=1) / np.sqrt(len(rts))) if len(rts) > 1 else np.nan,
-                "rt_correct_mean": float(np.mean(rts_c)) if rts_c else np.nan,
-                "rt_correct_se": float(np.std(rts_c, ddof=1) / np.sqrt(len(rts_c))) if len(rts_c) > 1 else np.nan,
-                "acc_mean": float(np.mean(accs)) if accs else np.nan,
-                "acc_se": float(np.std(accs, ddof=1) / np.sqrt(len(accs))) if len(accs) > 1 else np.nan,
-                "n_decided": sum(1 for t in trials if t["rt"] is not None),
-                "n_total": len(trials),
+                "rt_mean": rt_m, "rt_se": rt_se,
+                "rt_correct_mean": rtc_m, "rt_correct_se": rtc_se,
+                "acc_mean": acc_m, "acc_se": acc_se,
+                "z": z_cell if threshold_mode == "per_condition" else np.nan,
+                "n_decided": len(rt_list), "n_total": len(trials),
             }
 
         results[label] = agg
@@ -278,9 +371,10 @@ def sweep_conditions(
         if verbose:
             for cong_key in ("congruent", "incongruent"):
                 a = agg[cong_key]
+                z_str = f"z={a['z']:.2f}" if np.isfinite(a.get('z', np.nan)) else "z=per-trial"
                 print(f"{label:12s} {cong_key:12s} | "
                       f"RT(correct) = {a['rt_correct_mean']:.3f} +- {a['rt_correct_se']:.3f} | "
-                      f"Acc = {a['acc_mean']:.3f} | "
+                      f"Acc = {a['acc_mean']:.3f} | {z_str} | "
                       f"n = {a['n_decided']}/{a['n_total']}")
 
     # Compute switch costs
