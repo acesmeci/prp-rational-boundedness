@@ -22,6 +22,7 @@ thesis_figures/
 legacy/
 
 # Personal notes
+docs/
 troubleshooting.md
 todo.md
 instructions.md
