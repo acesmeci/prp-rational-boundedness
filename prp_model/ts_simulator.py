@@ -200,7 +200,7 @@ def sweep_conditions(
     n_stim: int = 100,
     n_phase2_steps: int = 50,
     n_repeats: int = DEFAULT_N_REPEATS,
-    thresholds: np.ndarray = np.arange(0.1, 1.1, 0.1),
+    thresholds: np.ndarray = np.arange(0.1, 1.6, 0.1),
     ITI: float = 4.0,
     dt: float = _DEFAULTS["dt"],
     tau: float = _DEFAULTS["tau"],
