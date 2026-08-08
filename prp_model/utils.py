@@ -104,6 +104,26 @@ def generate_trial_pair(
     stim2, cue2 = _make(prp_pair[1], feats)
     return stim1, stim2, cue1, cue2
 
+# Congruency helper for BCE 
+def prp_trial_congruency(
+    prp_pair: tuple[str, str],
+    seed: int,
+) -> bool:
+    """
+    Determine congruency for a PRP trial generated with `generate_trial_pair`.
+
+    Reconstructs the same feature vector from the seed and checks whether
+    the features in Task 1's and Task 2's input dimensions match.
+    Congruent trials have P = 1/N_FEATURES (1/3 for the 3×3 environment).
+
+    Must use the same seed that was passed to generate_trial_pair.
+    """
+    rng = np.random.RandomState(seed)
+    feats = rng.randint(0, N_FEATURES, size=N_PATHWAYS)
+    in_t1 = TASK_MAP[prp_pair[0]][0]
+    in_t2 = TASK_MAP[prp_pair[1]][0]
+    return bool(feats[in_t1] == feats[in_t2])
+
 # --- TASK-SWITCHING TRIAL GENERATION (BIVALENT STIMULI) ─────────────────────────────
 
 def generate_switch_trial(
