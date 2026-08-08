@@ -104,6 +104,106 @@ def generate_trial_pair(
     stim2, cue2 = _make(prp_pair[1], feats)
     return stim1, stim2, cue1, cue2
 
+# --- TASK-SWITCHING TRIAL GENERATION (BIVALENT STIMULI) ─────────────────────────────
+
+def generate_switch_trial(
+    prev_task: str,
+    curr_task: str,
+    seed: int | None = None,
+    blank_prev_stimulus: bool = True,
+    congruency_tasks: tuple[str, str] | None = None,
+) -> dict:
+    """
+    Generate stimuli and cues for a single task-switching trial.
+
+    Task switching uses BIVALENT stimuli: all three stimulus dimensions are
+    active simultaneously (one feature per dimension). Previous and current
+    tasks receive INDEPENDENTLY sampled stimuli (matching MATLAB's independent
+    randi sampling in Part1_Sim3_Transition_Analysis.m).
+
+    Congruency is defined on the CURRENT stimulus: whether the active features
+    in two reference input dimensions match. By default, the reference
+    dimensions come from (prev_task, curr_task). When ``congruency_tasks`` is
+    provided, those tasks' input dimensions are used instead — this is needed
+    for repeat baselines, where the MATLAB classifies A→A stimuli using the
+    switch pair's dimensions (e.g. E and A for the structural condition).
+
+    Parameters
+    ----------
+    prev_task : str
+        Previous task name (e.g. "E").
+    curr_task : str
+        Current task name (e.g. "A"). This is the task whose RT is measured.
+    seed : int or None
+        Random seed for stimulus sampling.
+    blank_prev_stimulus : bool
+        If True, the previous trial's stimulus is all zeros (matching MATLAB
+        repeat baseline). If False, an independently sampled bivalent stimulus
+        is generated (matching MATLAB switch trials).
+    congruency_tasks : (str, str) or None
+        Task pair whose input dimensions define the congruency check on the
+        current stimulus. Defaults to (prev_task, curr_task) if None.
+
+    Returns
+    -------
+    dict with keys:
+        stim_prev     : np.ndarray (I,)
+        stim_curr     : np.ndarray (I,)
+        cue_prev      : np.ndarray (T,)
+        cue_curr      : np.ndarray (T,)
+        congruent     : bool
+        correct_idx   : int
+        resp_indices  : list[int]
+    """
+    rng = np.random.RandomState(seed)
+    I = N_PATHWAYS * N_FEATURES
+    T_dim = N_PATHWAYS ** 2
+
+    # Independently sample features for current and previous stimuli
+    features_curr = rng.randint(0, N_FEATURES, size=N_PATHWAYS)
+    features_prev = rng.randint(0, N_FEATURES, size=N_PATHWAYS)
+
+    def _bivalent_stim(feats):
+        stim = np.zeros(I, dtype=np.float32)
+        for p in range(N_PATHWAYS):
+            stim[p * N_FEATURES + feats[p]] = 1.0
+        return stim
+
+    def _cue(task_name):
+        in_dim, out_dim = TASK_MAP[task_name]
+        cue = np.zeros(T_dim, dtype=np.float32)
+        cue[in_dim * N_PATHWAYS + out_dim] = 1.0
+        return cue
+
+    stim_curr = _bivalent_stim(features_curr)
+    cue_prev = _cue(prev_task)
+    cue_curr = _cue(curr_task)
+
+    if blank_prev_stimulus:
+        stim_prev = np.zeros(I, dtype=np.float32)
+    else:
+        stim_prev = _bivalent_stim(features_prev)
+
+    # Congruency: defined on the current stimulus using reference dimensions
+    ref_prev, ref_curr = congruency_tasks if congruency_tasks else (prev_task, curr_task)
+    in_ref_prev = TASK_MAP[ref_prev][0]
+    in_ref_curr = TASK_MAP[ref_curr][0]
+    congruent = bool(features_curr[in_ref_prev] == features_curr[in_ref_curr])
+
+    # Current task's correct response and output indices
+    in_dim, out_dim = TASK_MAP[curr_task]
+    correct_idx = int(features_curr[in_dim])
+    resp_indices = list(range(out_dim * N_FEATURES, (out_dim + 1) * N_FEATURES))
+
+    return {
+        "stim_prev": stim_prev,
+        "stim_curr": stim_curr,
+        "cue_prev": cue_prev,
+        "cue_curr": cue_curr,
+        "congruent": congruent,
+        "correct_idx": correct_idx,
+        "resp_indices": resp_indices,
+    }
 
 # ── Checkpoint I/O ───────────────────────────────────────────────────────────
 
@@ -240,90 +340,3 @@ def sim_seconds_to_ms(seconds: np.ndarray) -> np.ndarray:
     return np.asarray(seconds, float) * 1000
 
 
-# --- TASK-SWITCHING TRIAL GENERATION (BIVALENT STIMULI) ─────────────────────────────
-
-def generate_switch_trial(
-    prev_task: str,
-    curr_task: str,
-    seed: int | None = None,
-    blank_prev_stimulus: bool = True,
-) -> dict:
-    """
-    Generate stimuli and cues for a single task-switching trial.
-
-    Unlike PRP trials, task-switching uses BIVALENT stimuli: all three
-    stimulus dimensions are active simultaneously (one feature per dimension).
-    Previous and current tasks receive INDEPENDENTLY sampled stimuli
-    (matching MATLAB's independent randi sampling in Transition_Analysis).
-
-    Congruency is determined by the CURRENT stimulus: whether the active
-    features in the two tasks' input dimensions are identical within that
-    stimulus. This is independent of the previous stimulus.
-
-    Parameters
-    ----------
-    prev_task : str
-        Name of the previous task (e.g. "B").
-    curr_task : str
-        Name of the current task (e.g. "A").
-    seed : int or None
-        Random seed for stimulus sampling.
-    blank_prev_stimulus : bool
-        If True (default), the previous trial's stimulus is all zeros.
-        If False, an independently sampled bivalent stimulus is generated.
-
-    Returns
-    -------
-    dict with keys:
-        stim_prev, stim_curr, cue_prev, cue_curr,
-        congruent, correct_idx, resp_indices
-    """
-    rng = np.random.RandomState(seed)
-    I = N_PATHWAYS * N_FEATURES
-    T_dim = N_PATHWAYS ** 2
-
-    # Independently sample features for current and previous stimuli
-    features_curr = rng.randint(0, N_FEATURES, size=N_PATHWAYS)
-    features_prev = rng.randint(0, N_FEATURES, size=N_PATHWAYS)
-
-    def _bivalent_stim(feats):
-        stim = np.zeros(I, dtype=np.float32)
-        for p in range(N_PATHWAYS):
-            stim[p * N_FEATURES + feats[p]] = 1.0
-        return stim
-
-    def _cue(task_name):
-        in_dim, out_dim = TASK_MAP[task_name]
-        cue = np.zeros(T_dim, dtype=np.float32)
-        cue[in_dim * N_PATHWAYS + out_dim] = 1.0
-        return cue
-
-    stim_curr = _bivalent_stim(features_curr)
-    cue_prev = _cue(prev_task)
-    cue_curr = _cue(curr_task)
-
-    if blank_prev_stimulus:
-        stim_prev = np.zeros(I, dtype=np.float32)
-    else:
-        stim_prev = _bivalent_stim(features_prev)
-
-    # Congruency: based on CURRENT stimulus only
-    # Do the two tasks' input dimensions have the same feature in this stimulus?
-    in_prev = TASK_MAP[prev_task][0]
-    in_curr = TASK_MAP[curr_task][0]
-    congruent = bool(features_curr[in_prev] == features_curr[in_curr])
-
-    # Current task's correct response and output indices
-    in_dim, out_dim = TASK_MAP[curr_task]
-    correct_idx = int(features_curr[in_dim])
-    resp_indices = list(range(out_dim * N_FEATURES, (out_dim + 1) * N_FEATURES))
-
-    return {
-        "stim_prev": stim_prev,
-        "stim_curr": stim_curr,
-        "cue_prev": cue_prev,
-        "cue_curr": cue_curr,
-        "congruent": congruent,
-        "correct_idx": correct_idx,
-        "resp_indices": resp_indices,
-    }
