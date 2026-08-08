@@ -29,6 +29,99 @@ from prp_model.utils import (
     generate_trial_pair, prp_trial_congruency,
 )
 
+# One z1 per task pair, optimized across SOAs and congruencies jointly
+def calibrate_z1(
+    task_net,
+    prp_pair: tuple[str, str] = ("B", "A"),
+    soa_values: list[int] = [1, 5, 11],
+    n_trials: int = 30,
+    persistence: float = 0.65,
+    thresholds: np.ndarray = np.arange(0.1, 1.6, 0.1),
+    ITI: float = 1.8,
+    n_repeats: int = 100,
+    dt_lca: float = _DEFAULTS["dt"],
+    tau: float = _DEFAULTS["tau"],
+    t0: float = _DEFAULTS["t0"],
+    noise_std: float = _DEFAULTS["noise_std"],
+    base_seed: int = 0,
+    max_timesteps: int = 100,
+    acc_floor: float = 0.98,
+    verbose: bool = True,
+) -> float:
+    """
+    Find a single z1 for a task pair by pooling reward-rate curves across
+    SOAs and congruencies, subject to an accuracy floor.
+
+    The accuracy floor prevents the optimizer from picking very low
+    thresholds where the LCA commits before backward crosstalk has
+    time to manifest. This matches the PRP pipeline's approach in
+    compute_condition_thresholds.
+    """
+    from prp_model.prp_simulator import _decode
+    from prp_model.threshold_utils import optimize_lca_threshold_dist
+
+    rr_curves = []
+    acc_curves = []
+
+    for soa in soa_values:
+        for j in range(n_trials):
+            seed = base_seed + soa * 1000 + j
+            s1, s2, c1, c2 = generate_trial_pair(prp_pair, seed=seed)
+
+            I, T = s1.shape[0], c1.shape[0]
+            inp, cue = [], []
+            for t in range(max_timesteps):
+                s = np.zeros(I, np.float32) + s1
+                if t >= soa:
+                    s += s2
+                c = np.zeros(T, np.float32) + c1
+                if t >= soa:
+                    c += c2
+                inp.append(s); cue.append(c)
+
+            import torch
+            x = np.stack(inp).astype(np.float32)
+            tt = np.stack(cue).astype(np.float32)
+            outs = task_net.integrate(
+                torch.from_numpy(x), torch.from_numpy(tt),
+                persistence=persistence,
+            )
+            out_np = np.stack([o.numpy() for o in outs], axis=0)
+
+            idxs1, corr1 = _decode(c1, s1)
+            _, res = optimize_lca_threshold_dist(
+                out_np, idxs1, correct_response_idx=corr1,
+                thresholds=thresholds, ITI=ITI, n_repeats=n_repeats,
+                dt=dt_lca, tau=tau, noise_std=noise_std,
+            )
+            rr_curves.append(res["reward_rates"])
+            acc_curves.append(res["accuracies"])
+
+    mean_rr = np.stack(rr_curves).mean(axis=0)
+    mean_acc = np.stack(acc_curves).mean(axis=0)
+
+    # Constrained argmax: best RR where accuracy >= floor
+    valid = mean_acc >= acc_floor
+    if valid.any():
+        # Among thresholds meeting the floor, pick highest RR
+        masked_rr = np.where(valid, mean_rr, -np.inf)
+        best_idx = int(np.argmax(masked_rr))
+    else:
+        # No threshold meets floor — pick highest accuracy
+        best_idx = int(np.argmax(mean_acc))
+        if verbose:
+            print(f"  WARNING: no threshold meets acc >= {acc_floor:.2f}, "
+                  f"best acc = {mean_acc[best_idx]:.3f}")
+
+    z_opt = float(thresholds[best_idx])
+
+    if verbose:
+        print(f"Calibrated z1 for {prp_pair[0]}->{prp_pair[1]}: "
+              f"z={z_opt:.2f} (RR={mean_rr[best_idx]:.3f}, "
+              f"Acc={mean_acc[best_idx]:.3f}, floor={acc_floor}) "
+              f"[{len(rr_curves)} trials across {len(soa_values)} SOAs]")
+
+    return z_opt
 
 def sweep_soa_bce(
     task_net,
@@ -230,12 +323,22 @@ def run_bce_comparison(
             print(f"{label}: {t1} -> {t2}")
             print(f"{'='*50}")
 
+        # Calibrate session-level z1 for this pair
+        z1 = calibrate_z1(
+            task_net, prp_pair=(t1, t2),
+            soa_values=[soa_values[0], soa_values[len(soa_values)//2], soa_values[-1]],
+            n_trials=20, persistence=persistence,
+            noise_std=noise_std, ITI=ITI, thresholds=thresholds,
+            base_seed=base_seed + 99000,  # different seeds from measurement
+            verbose=verbose,
+        )
+
         res = sweep_soa_bce(
             task_net, prp_pair=(t1, t2),
             soa_values=soa_values,
             n_trials_per_soa=n_trials_per_soa,
             persistence=persistence,
-            z_task1_fixed=z_task1_fixed,
+            z_task1_fixed=z1,
             z_task2_fixed=z_task2_fixed,
             noise_std=noise_std,
             ITI=ITI,
